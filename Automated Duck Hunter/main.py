@@ -102,7 +102,7 @@ class DiscordBot:
                             print("Reloaded!") 
                 else:
                     if 'duckhunt' not in msg['author'].lower():
-                        if 'duck' in msg['author'].lower():
+                        if 'duck' in msg['author'].lower() and 'killed' not in msg['content'].lower():
                             await self.send_message(channel_id, "!pew")
                             print("Got a duck!") 
                         elif 'dead' in msg['content'].lower():
@@ -111,7 +111,7 @@ class DiscordBot:
                         elif 'jam' in msg['content'].lower() or '0/6' in msg[key].lower():
                             await self.send_message(channel_id, "!reload") 
                             print("Reloaded!") 
-                sleep(1) # Check every second to avoid triggering rate limit
+                sleep(0.5) # Check every second to avoid triggering rate limit
 
 
         await self.client.start(self.token)
@@ -121,7 +121,7 @@ async def main():
     load_dotenv()
     BOT_TOKEN = os.getenv("BOT_TOKEN")
     bot = DiscordBot(BOT_TOKEN)
-    await bot.run(use_content=False)
+    await bot.run()
 
 if __name__ == "__main__":
     asyncio.run(main())
