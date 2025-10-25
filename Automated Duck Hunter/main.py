@@ -72,26 +72,45 @@ class DiscordBot:
             print("Setting up the target channel...")
             target_guild = self.client.guilds[0]
             text_channels = target_guild.text_channels
-            channel_id = text_channels[0].id
-            print(f"Channel: {text_channels[0]}, ID: {channel_id}, type: {type(channel_id)}")
+            
+            # Find matching channel using a generator
+            target_channel = next((channel for channel in text_channels if channel.name == 'duck-hunt'), None)
+            if target_channel:
+                print("Found channel!")
+            else:
+                print("Could not find channel...")
+            channel_id = target_channel.id
+            print(f"Channel: {target_channel.name}, ID: {channel_id}, type: {type(channel_id)}")
                                     
             assert channel_id, "Channel ID is none? What???"
             while True:
                 # print("Reading most recent message...")
                 msg = (await self.get_recent_messages(channel_id, 1))[0]
                 
-                if debug: print(f"[{msg['timestamp']}] {msg['author']}: {msg['content']}")
-                key = 'author' if not use_content else 'content' 
-                if 'duckhunt' not in msg[key].lower():
-                    if 'duck' in msg[key].lower():
-                        await self.send_message(channel_id, "!pew")
-                        print("Got a duck!") 
-                    elif 'dead' in msg[key].lower():
-                        await self.send_message(channel_id, "!revive") 
-                        print("Revived!") 
-                    elif 'jam' in msg[key].lower() or '0' in msg[key].lower():
-                        await self.send_message(channel_id, "!reload") 
-                        print("Reloaded!") 
+                if debug: 
+                    print(f"[{msg['timestamp']}] {msg['author']}: {msg['content']}") 
+                    key = 'author' if not use_content else 'content' 
+                    if 'duckhunt' not in msg[key].lower():
+                        if 'duck' in msg[key].lower():
+                            await self.send_message(channel_id, "!pew")
+                            print("Got a duck!") 
+                        elif 'dead' in msg[key].lower():
+                            await self.send_message(channel_id, "!revive") 
+                            print("Revived!") 
+                        elif 'jam' in msg[key].lower() or '0/6' in msg[key].lower():
+                            await self.send_message(channel_id, "!reload") 
+                            print("Reloaded!") 
+                else:
+                    if 'duckhunt' not in msg['author'].lower():
+                        if 'duck' in msg['author'].lower():
+                            await self.send_message(channel_id, "!pew")
+                            print("Got a duck!") 
+                        elif 'dead' in msg['content'].lower():
+                            await self.send_message(channel_id, "!revive") 
+                            print("Revived!") 
+                        elif 'jam' in msg['content'].lower() or '0/6' in msg[key].lower():
+                            await self.send_message(channel_id, "!reload") 
+                            print("Reloaded!") 
                 sleep(1) # Check every second to avoid triggering rate limit
 
 
