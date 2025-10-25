@@ -77,18 +77,21 @@ class DiscordBot:
                                     
             assert channel_id, "Channel ID is none? What???"
             while True:
-                print("Reading most recent message...")
+                # print("Reading most recent message...")
                 msg = (await self.get_recent_messages(channel_id, 1))[0]
                 
                 if debug: print(f"[{msg['timestamp']}] {msg['author']}: {msg['content']}")
                 key = 'author' if not use_content else 'content' 
                 if 'duckhunt' not in msg[key].lower():
                     if 'duck' in msg[key].lower():
-                        await self.send_message(channel_id, "!pew") 
+                        await self.send_message(channel_id, "!pew")
+                        print("Got a duck!") 
                     elif 'dead' in msg[key].lower():
                         await self.send_message(channel_id, "!revive") 
+                        print("Revived!") 
                     elif 'jam' in msg[key].lower() or '0' in msg[key].lower():
                         await self.send_message(channel_id, "!reload") 
+                        print("Reloaded!") 
                 sleep(1) # Check every second to avoid triggering rate limit
 
 
@@ -99,7 +102,7 @@ async def main():
     load_dotenv()
     BOT_TOKEN = os.getenv("BOT_TOKEN")
     bot = DiscordBot(BOT_TOKEN)
-    await bot.run(use_content=True)
+    await bot.run(use_content=False)
 
 if __name__ == "__main__":
     asyncio.run(main())
