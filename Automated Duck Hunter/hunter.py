@@ -111,7 +111,7 @@ class DiscordBot:
                         elif 'jam' in msg['content'].lower() or '0/6' in msg[key].lower():
                             await self.send_message(channel_id, "!reload") 
                             print("Reloaded!") 
-                sleep(0.5) # Check every second to avoid triggering rate limit
+                sleep(0.1) # Avoid triggering rate limit
 
 
         await self.client.start(self.token)
