@@ -1,5 +1,3 @@
-import math
-
 ranges = []
 
 # with open("./example.txt", "r", encoding="utf-8") as f:
