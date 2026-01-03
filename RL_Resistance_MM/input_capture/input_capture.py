@@ -1,20 +1,26 @@
 from collections import defaultdict
-from collections import defaultdict
-import keyboard
 import logging
 import mouse
 import pyautogui
 import queue
 import threading
 import time
+import keyboard
 
 from schemas import InputState, MouseEvent
 
+
 # ==================== INPUT CAPTURE ====================
 
+
 class InputCapture:
-    """Captures keyboard and mouse inputs with high precision"""
-    
+    """Captures keyboard and mouse inputs with high precision.
+
+    This class polls mouse position/buttons at a high rate and installs a
+    global keyboard hook (using the `keyboard` module) when started so key
+    presses/releases are reliably captured on Windows.
+    """
+
     def __init__(self, poll_rate=1000):
         self.poll_rate = poll_rate
         self.key_states = defaultdict(lambda: {'state': InputState.RELEASE, 'press_time': 0})
@@ -26,102 +32,132 @@ class InputCapture:
         self.event_queue = queue.Queue(maxsize=10000)
         self.is_running = False
         self.capture_thread = None
-        
+        self._keyboard_hook = None
+
     def start(self):
-        """Start input capture in a separate thread"""
+        """Start input capture and install keyboard hook."""
+        # Install keyboard hook for reliable global key events
+        try:
+            if not self._keyboard_hook:
+                self._keyboard_hook = keyboard.hook(self._on_key_event)
+        except Exception:
+            logging.exception("Failed to install keyboard hook; continuing without hook")
+
         self.is_running = True
         self.capture_thread = threading.Thread(target=self._capture_loop)
         self.capture_thread.start()
         logging.info(f"Input capture started at {self.poll_rate}Hz")
-        
+
     def stop(self):
-        """Stop input capture"""
+        """Stop input capture and remove keyboard hook."""
         self.is_running = False
         if self.capture_thread:
             self.capture_thread.join(timeout=2.0)
-            
+
+        # Unhook keyboard
+        try:
+            if self._keyboard_hook:
+                keyboard.unhook(self._keyboard_hook)
+                self._keyboard_hook = None
+        except Exception:
+            logging.exception("Failed to unhook keyboard")
+
     def _capture_loop(self):
-        """Main capture loop running at specified poll rate"""
+        """Main capture loop running at specified poll rate."""
         last_poll_time = time.perf_counter()
         poll_interval = 1.0 / self.poll_rate
-        
+
         while self.is_running:
             current_time = time.perf_counter()
             elapsed = current_time - last_poll_time
-            
+
             if elapsed >= poll_interval:
                 self._poll_inputs(current_time)
                 last_poll_time = current_time
             else:
-                time.sleep(poll_interval * 0.1)  # Small sleep to prevent CPU overload
-                
+                time.sleep(poll_interval * 0.1)
+
     def _poll_inputs(self, timestamp):
-        """Poll current input states and detect changes"""
+        """Poll current input states and detect mouse changes."""
         try:
-            # Capture mouse
             x, y = pyautogui.position()
             buttons = (
                 mouse.is_pressed(button='left'),
                 mouse.is_pressed(button='middle'),
                 mouse.is_pressed(button='right')
             )
-            
+
             # Detect mouse movement
             last_x, last_y = self.mouse_states['position']
             dx, dy = x - last_x, y - last_y
-            
+
             if dx != 0 or dy != 0:
-                mouse_event = MouseEvent(
-                    x=x, y=y, dx=dx, dy=dy,
-                    buttons=buttons,
-                    timestamp=timestamp
-                )
+                mouse_event = MouseEvent(x=x, y=y, dx=dx, dy=dy, buttons=buttons, timestamp=timestamp)
                 self.event_queue.put(('mouse_move', mouse_event))
-            
+
             # Detect mouse button changes
             for i, (button_name, button_idx) in enumerate([('left', 0), ('middle', 1), ('right', 2)]):
                 current_state = buttons[button_idx]
                 last_state = self.mouse_states['buttons'][button_idx]
-                
+
                 if current_state != last_state:
                     event_type = 'mouse_press' if current_state else 'mouse_release'
-                    mouse_event = MouseEvent(
-                        x=x, y=y, buttons=buttons,
-                        timestamp=timestamp
-                    )
+                    mouse_event = MouseEvent(x=x, y=y, buttons=buttons, timestamp=timestamp)
                     self.event_queue.put((f'{event_type}_{button_name}', mouse_event))
-            
+
             # Update mouse state
-            self.mouse_states = {
-                'position': (x, y),
-                'buttons': buttons,
-                'last_position': (x, y)
-            }
-            
+            self.mouse_states = {'position': (x, y), 'buttons': buttons, 'last_position': (x, y)}
+
         except Exception as e:
             logging.error(f"Error polling mouse: {e}")
-            
+
+    def _on_key_event(self, event):
+        """Keyboard hook callback from `keyboard` module.
+
+        Puts `key_press` and `key_release` events into `event_queue` and
+        updates `key_states` so callers can query `is_key_pressed`.
+        """
+        try:
+            et = getattr(event, 'event_type', None)
+            name = getattr(event, 'name', None)
+            t = getattr(event, 'time', time.time())
+            if not name:
+                return
+
+            if et == 'down':
+                ev = type('E', (), {'key': name, 'timestamp': t})
+                self.event_queue.put(('key_press', ev))
+                self.key_states[name] = {'state': InputState.PRESS, 'press_time': t}
+                try:
+                    print(f"Key pressed: {name}")
+                except Exception:
+                    pass
+                logging.info(f"Key pressed: {name}")
+            elif et == 'up':
+                ev = type('E', (), {'key': name, 'timestamp': t})
+                self.event_queue.put(('key_release', ev))
+                self.key_states[name] = {'state': InputState.RELEASE, 'press_time': 0}
+        except Exception:
+            logging.exception("Error in keyboard hook callback")
+
     def get_events_since(self, since_timestamp):
-        """Get all input events since a given timestamp"""
+        """Get all input events since a given timestamp."""
         events = []
         while not self.event_queue.empty():
             try:
-                event_type, event = self.event_queue.get_nowait() # Async retrieval
-                if event.timestamp > since_timestamp:
+                event_type, event = self.event_queue.get_nowait()
+                if getattr(event, 'timestamp', 0) > since_timestamp:
                     events.append((event_type, event))
             except queue.Empty:
                 break
         return events
-    
+
     def get_current_state(self):
-        """Get current input state snapshot"""
-        return {
-            'keyboard': {k: v['state'] for k, v in self.key_states.items()},
-            'mouse': self.mouse_states
-        }
+        """Get current input state snapshot."""
+        return {'keyboard': {k: v['state'] for k, v in self.key_states.items()}, 'mouse': self.mouse_states}
 
     def is_key_pressed(self, key: str) -> bool:
-        """Return whether a watched key is currently pressed (best-effort)."""
+        """Return whether a key is currently pressed (best-effort)."""
         state = self.key_states.get(key)
         if not state:
             try:

@@ -39,12 +39,56 @@ class AudioCapture:
                     self.audio_buffer[:frames - first_part] = indata[first_part:]
                 self.buffer_index = (self.buffer_index + frames) % self.buffer_samples
                 
-        self.stream = sd.InputStream(
-            callback=callback,
-            channels=self.channels,
-            samplerate=self.sample_rate,
-            dtype='float32'
-        )
+        # Attempt to locate a WASAPI loopback (Windows) or Stereo Mix device
+        device_index = None
+        try:
+            devices = sd.query_devices()
+            for i, dev in enumerate(devices):
+                name = dev.get('name', '').lower()
+                try:
+                    hostapi = sd.query_hostapis(dev['hostapi'])['name'].lower()
+                except Exception:
+                    hostapi = ''
+
+                # Prefer devices that explicitly indicate loopback or stereo mix under WASAPI
+                if 'wasapi' in hostapi and ('loopback' in name or 'stereo mix' in name):
+                    device_index = i
+                    break
+
+            # fallback: pick any device with 'loopback' in the name
+            if device_index is None:
+                for i, dev in enumerate(devices):
+                    if 'loopback' in dev.get('name', '').lower():
+                        device_index = i
+                        break
+        except Exception:
+            logging.exception('Error querying audio devices')
+
+        # Determine effective channel count
+        effective_channels = self.channels
+        try:
+            if device_index is not None:
+                dev_info = sd.query_devices(device_index, 'input')
+            else:
+                dev_info = sd.query_devices(None, 'input')
+
+            max_ch = int(dev_info.get('max_input_channels', 0)) if dev_info else 0
+            if max_ch and max_ch > 0:
+                effective_channels = max_ch
+        except Exception:
+            logging.exception('Error getting device channel info')
+
+        # Recreate rolling buffer with detected channel count
+        self.channels = effective_channels
+        self.buffer_samples = int(self.sample_rate * self.buffer_seconds)
+        self.audio_buffer = np.zeros((self.buffer_samples, self.channels), dtype=np.float32)
+        self.buffer_index = 0
+
+        stream_kwargs = dict(callback=callback, channels=self.channels, samplerate=self.sample_rate, dtype='float32')
+        if device_index is not None:
+            stream_kwargs['device'] = device_index
+
+        self.stream = sd.InputStream(**stream_kwargs)
         self.stream.start()
         self.is_recording = True
         logging.info(f"Audio capture started: {self.sample_rate}Hz, {self.channels} channels")
