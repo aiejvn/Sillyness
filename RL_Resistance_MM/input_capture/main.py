@@ -26,7 +26,8 @@ class GameCaptureController:
         self.audio_capture = AudioCapture(
             sample_rate=config.audio_sample_rate,
             channels=config.audio_channels,
-            buffer_seconds=config.audio_buffer_seconds
+            buffer_seconds=config.audio_buffer_seconds,
+            device_name="MSI MP251 (4- HD Audio Driver for Display Audio)"
         )
         self.screen_capture = ScreenCapture(
             target_fps=config.capture_fps,
