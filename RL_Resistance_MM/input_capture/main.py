@@ -26,8 +26,7 @@ class GameCaptureController:
         self.audio_capture = AudioCapture(
             sample_rate=config.audio_sample_rate,
             channels=config.audio_channels,
-            buffer_seconds=config.audio_buffer_seconds,
-            device_name="MSI MP251 (4- HD Audio Driver for Display Audio)"
+            buffer_seconds=config.audio_buffer_seconds
         )
         self.screen_capture = ScreenCapture(
             target_fps=config.capture_fps,
@@ -322,7 +321,7 @@ def main():
     try:
         # Delay before starting recording (allow user to switch to game)
         print("Starting capture in 2 seconds...")
-        time.sleep(2.0)
+        time.sleep(1.0)
 
         # Start capture
         controller.start()
