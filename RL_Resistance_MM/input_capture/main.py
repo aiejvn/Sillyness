@@ -312,7 +312,7 @@ def main():
         capture_fps=60,
         audio_sample_rate=48000,
         output_dir="./re_resistance_captures",
-        session_id="test_session_001"
+        session_id="session_001"
     )
     
     # Create controller
@@ -320,8 +320,8 @@ def main():
     
     try:
         # Delay before starting recording (allow user to switch to game)
-        print("Starting capture in 2 seconds...")
-        time.sleep(1.0)
+        print("Starting capture in 5 seconds...")
+        time.sleep(5.0)
 
         # Start capture
         controller.start()
