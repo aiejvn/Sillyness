@@ -312,7 +312,7 @@ def main():
         capture_fps=60,
         audio_sample_rate=48000,
         output_dir="./re_resistance_captures",
-        session_id="session_001"
+        session_id="session_003"
     )
     
     # Create controller
