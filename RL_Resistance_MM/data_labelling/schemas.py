@@ -15,8 +15,8 @@ class RegionConfig:
         return (self.x, self.y, self.x + self.width, self.y + self.height)
 
 
-# The time-burn popup region from the spec: top-right of the main timer
-TIME_BURN_POPUP_REGION = RegionConfig(x=1146, y=68, width=179, height=81)
+# The time-burn popup region: narrowed to exclude "Sec." text
+TIME_BURN_POPUP_REGION = RegionConfig(x=1146, y=68, width=110, height=81)
 
 
 @dataclass
