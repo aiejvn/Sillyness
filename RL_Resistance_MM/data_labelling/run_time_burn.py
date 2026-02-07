@@ -22,12 +22,31 @@ from schemas import TIME_BURN_POPUP_REGION
 from time_burn import crop_time_region, extract_time_burn, ocr_time_value, parse_delta
 
 
-def run_validation(frames_dir: str):
+def run_validation(
+    frames_dir: str,
+    equalization: str | None = None,
+    thresholding: str | None = None,
+    threshold_value: int = 180,
+    scale_factor: int = 3,
+    invert: bool = True,
+    morph_clean: bool = True,
+    debug_dir: str | None = None,
+):
     """Validate OCR against a map.csv file in the given directory."""
     map_path = os.path.join(frames_dir, "map.csv")
     if not os.path.exists(map_path):
         print(f"Error: map.csv not found in {frames_dir}")
         return
+
+    if debug_dir:
+        os.makedirs(debug_dir, exist_ok=True)
+
+    thresh_desc = thresholding or f"fixed-{threshold_value}"
+    print(f"Equalization: {equalization or 'none'}, Thresholding: {thresh_desc}")
+    print(f"Scale: {scale_factor}x, Invert: {invert}, Morph: {morph_clean}")
+    if debug_dir:
+        print(f"Debug images: {debug_dir}")
+    print()
 
     correct = 0
     wrong = 0
@@ -46,7 +65,19 @@ def run_validation(frames_dir: str):
 
             image = Image.open(img_path)
             cropped = crop_time_region(image, TIME_BURN_POPUP_REGION)
-            raw_text, sign = ocr_time_value(cropped)
+            debug_path = None
+            if debug_dir:
+                debug_path = os.path.join(debug_dir, name.replace(".jpg", "_thresh.png"))
+            raw_text, sign = ocr_time_value(
+                cropped,
+                equalization=equalization,
+                thresholding=thresholding,
+                threshold_value=threshold_value,
+                scale_factor=scale_factor,
+                invert=invert,
+                morph_clean=morph_clean,
+                debug_path=debug_path,
+            )
             delta = parse_delta(raw_text, sign)
 
             if delta == expected:
@@ -87,6 +118,45 @@ def main():
         action="store_true",
         help="Run validation mode: compare OCR results against map.csv in the frames_dir.",
     )
+    parser.add_argument(
+        "--equalization", "-e",
+        choices=["clahe", "hist"],
+        default=None,
+        help="Equalization method for preprocessing: 'clahe' (adaptive), 'hist' (standard histogram).",
+    )
+    parser.add_argument(
+        "--thresholding", "-t",
+        choices=["otsu", "adaptive"],
+        default=None,
+        help="Thresholding method: 'otsu' (automatic), 'adaptive' (Gaussian). Default: fixed threshold.",
+    )
+    parser.add_argument(
+        "--threshold-value", "-tv",
+        type=int,
+        default=180,
+        help="Fixed threshold value (0-255) when not using otsu/adaptive. Default: 180.",
+    )
+    parser.add_argument(
+        "--scale", "-s",
+        type=int,
+        default=3,
+        help="Scale factor for image before OCR. Tesseract works better with larger images. Default: 3.",
+    )
+    parser.add_argument(
+        "--no-invert",
+        action="store_true",
+        help="Disable threshold inversion. By default, we invert to get black text on white background.",
+    )
+    parser.add_argument(
+        "--no-morph",
+        action="store_true",
+        help="Disable morphological cleanup operations.",
+    )
+    parser.add_argument(
+        "--debug-dir",
+        default=None,
+        help="Save preprocessed threshold images to this directory for debugging.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -95,7 +165,16 @@ def main():
     )
 
     if args.validate:
-        run_validation(args.frames_dir)
+        run_validation(
+            args.frames_dir,
+            equalization=args.equalization,
+            thresholding=args.thresholding,
+            threshold_value=args.threshold_value,
+            scale_factor=args.scale,
+            invert=not args.no_invert,
+            morph_clean=not args.no_morph,
+            debug_dir=args.debug_dir,
+        )
         return
 
     events = extract_time_burn(args.frames_dir)
