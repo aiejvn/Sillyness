@@ -1,9 +1,9 @@
 name,expected_value
 frame_001960.jpg,-1
 frame_001961.jpg,-1
-frame_001962.jpg,-1
-frame_001963.jpg,-1
-frame_001964.jpg,-1
+frame_001962.jpg,0
+frame_001963.jpg,0
+frame_001964.jpg,0
 frame_001965.jpg,-1
 frame_001966.jpg,-1
 frame_001967.jpg,-1
@@ -53,7 +53,7 @@ frame_002689.jpg,+10
 frame_002690.jpg,+10
 frame_002691.jpg,+10
 frame_002692.jpg,+10
-frame_007185.jpg,-15
+frame_007185.jpg,0
 frame_007186.jpg,-15
 frame_007187.jpg,-15
 frame_007188.jpg,-15
@@ -61,3 +61,13 @@ frame_007189.jpg,-15
 frame_007190.jpg,-15
 frame_007191.jpg,-15
 frame_007192.jpg,-15
+frame_009882.jpg,+30
+frame_009883.jpg,+30
+frame_009884.jpg,+30
+frame_009892.jpg,+30
+frame_017253.jpg,0
+frame_017251.jpg,0
+frame_017252.jpg,-1
+frame_017262.jpg,-1
+frame_017263.jpg,-16
+frame_017264.jpg,-16
