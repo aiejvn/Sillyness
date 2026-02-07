@@ -10,6 +10,9 @@ from PIL import Image
 
 from schemas import RegionConfig, TimeBurnEvent, TIME_BURN_POPUP_REGION
 
+# Configure Tesseract executable path
+pytesseract.pytesseract.tesseract_cmd = r"C:\Users\Py Torch\AppData\Local\Programs\Tesseract-OCR\tesseract.exe"
+
 logger = logging.getLogger(__name__)
 
 
@@ -17,13 +20,43 @@ def crop_time_region(image: Image.Image, region: RegionConfig) -> Image.Image:
     """Crop the OCR region from a full-resolution frame."""
     return image.crop(region.box)
 
+# TODO: Curate small validation set of time gain/loss images, start testing various methods of OCR
 
-def ocr_time_value(cropped_image: Image.Image) -> str:
-    """Preprocess a cropped popup region and OCR it.
+def detect_sign_from_color(cropped_image: Image.Image) -> int:
+    """Detect whether the popup indicates time burn (-) or time gain (+) based on background color.
 
-    Returns the raw OCR text (e.g. "-15", "+10", or "" if nothing detected).
+    Red background = time burn (negative)
+    Blue background = time gain (positive)
+
+    Returns -1 for burn, +1 for gain, or 0 if undetermined.
     """
     img = np.array(cropped_image)
+
+    # Count red vs blue pixels
+    r, b = img[:, :, 0], img[:, :, 2]
+
+    # A pixel is "red" if red channel dominates blue
+    red_pixels = np.sum((r > b + 30) & (r > 100))
+    # A pixel is "blue" if blue channel dominates red
+    blue_pixels = np.sum((b > r + 30) & (b > 100))
+
+    # Red-dominant = time burn (negative), Blue-dominant = time gain (positive)
+    if red_pixels > blue_pixels * 1.5:
+        return -1
+    elif blue_pixels > red_pixels * 1.5:
+        return 1
+    return 0
+
+
+def ocr_time_value(cropped_image: Image.Image) -> tuple[str, int]:
+    """Preprocess a cropped popup region and OCR it.
+
+    Returns a tuple of (raw_ocr_text, sign) where sign is -1, +1, or 0.
+    """
+    img = np.array(cropped_image)
+
+    # Detect sign from background color before converting to grayscale
+    sign = detect_sign_from_color(cropped_image)
 
     # Convert to grayscale
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
@@ -31,23 +64,27 @@ def ocr_time_value(cropped_image: Image.Image) -> str:
     # Binary threshold — the popup text is bright on a coloured background
     _, thresh = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY)
 
-    # Tesseract config: single line, allow digits and +/- signs
-    config = "--psm 7 -c tessedit_char_whitelist=0123456789+-"
+    # Tesseract config: single line, digits only (no +/- since we detect sign via color)
+    config = "--psm 7 -c tessedit_char_whitelist=0123456789"
     text = pytesseract.image_to_string(
         thresh, config=config
     ).strip()
 
-    return text
+    return text, sign
 
+# Note: OCR just has issues recognizing the digits.
+def parse_delta(raw_text: str, sign: int) -> int | None:
+    """Parse the numeric value from OCR text and apply the sign.
 
-def parse_delta(raw_text: str) -> int | None:
-    """Try to parse a signed integer from OCR text like '-15', '+10', etc.
+    Args:
+        raw_text: OCR'd digits (e.g. "15", "10")
+        sign: -1 for time burn, +1 for time gain
 
-    Returns the integer value or None if unparseable.
+    Returns the signed integer value or None if unparseable.
     """
-    match = re.search(r"([+-]?\d+)", raw_text)
-    if match:
-        return int(match.group(1))
+    match = re.search(r"(\d+)", raw_text)
+    if match and sign != 0:
+        return sign * int(match.group(1))
     return None
 
 
@@ -84,15 +121,15 @@ def extract_time_burn(
 
         image = Image.open(path)
         cropped = crop_time_region(image, region)
-        raw_text = ocr_time_value(cropped)
+        raw_text, sign = ocr_time_value(cropped)
 
-        if not raw_text:
-            # No popup visible — reset so next popup is treated as new
+        if not raw_text or sign == 0:
+            # No popup visible or can't determine sign — reset so next popup is treated as new
             if prev_delta is not None:
                 prev_delta = None
             continue
 
-        delta = parse_delta(raw_text)
+        delta = parse_delta(raw_text, sign)
         if delta is None:
             continue
 
