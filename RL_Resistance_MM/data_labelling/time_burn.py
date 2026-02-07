@@ -77,10 +77,8 @@ def ocr_time_value(
     # Detect sign from background color before converting to grayscale
     sign = detect_sign_from_color(cropped_image)
 
-    # Use HSV Value channel instead of standard grayscale
-    # This captures brightness regardless of color, helping with colored text on colored backgrounds
-    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
-    gray = hsv[:, :, 2]  # Value channel = brightness
+    # Convert to grayscale
+    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
 
     # Scale up for better OCR (Tesseract struggles with small text)
     if scale_factor > 1:
@@ -120,8 +118,8 @@ def ocr_time_value(
     if debug_path:
         cv2.imwrite(debug_path, thresh)
 
-    # Tesseract config: single text line (PSM 7), digits only
-    config = "--psm 7 -c tessedit_char_whitelist=0123456789"
+    # Tesseract config: sparse text (PSM 11), digits only
+    config = "--psm 11 -c tessedit_char_whitelist=0123456789"
     text = pytesseract.image_to_string(thresh, config=config).strip()
 
     return text, sign
