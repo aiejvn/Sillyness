@@ -21,6 +21,7 @@ from PIL import Image
 from schemas import BIO_ENERGY_REGION
 from bio_energy import crop_region, extract_bio_energy, ocr_bio_value, parse_bio_value
 
+# Best config so far: python run_bio_energy.py examples/bio_extraction --validate --debug-dir examples/bio_extraction/debug
 
 def run_validation(
     frames_dir: str,

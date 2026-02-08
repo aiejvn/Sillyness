@@ -90,6 +90,11 @@ def ocr_bio_value(
         thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
         thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
 
+    # Pad with white border so digits don't touch image edges (Tesseract needs margin)
+    pad = 20
+    bg = 255  # white background (after inversion)
+    thresh = cv2.copyMakeBorder(thresh, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=bg)
+
     # Save debug image if requested
     if debug_path:
         cv2.imwrite(debug_path, thresh)

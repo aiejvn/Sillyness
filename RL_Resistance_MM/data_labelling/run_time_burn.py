@@ -21,6 +21,7 @@ from PIL import Image
 from schemas import TIME_BURN_POPUP_REGION
 from time_burn import crop_time_region, extract_time_burn, ocr_time_value, parse_delta
 
+# Best config so far: --validate -t otsu --no-morph
 
 def run_validation(
     frames_dir: str,
