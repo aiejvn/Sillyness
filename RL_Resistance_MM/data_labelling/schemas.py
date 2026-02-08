@@ -19,6 +19,18 @@ class RegionConfig:
 TIME_BURN_POPUP_REGION = RegionConfig(x=1146, y=68, width=100, height=81)
 
 
+# Bio energy counter region: spec says (122, 938, 64, 76)
+BIO_ENERGY_REGION = RegionConfig(x=122, y=938, width=64, height=76)
+
+
+@dataclass
+class BioEnergyReading:
+    """A sampled bio energy value at a specific frame."""
+    frame_number: int
+    value: int  # current bio energy (positive integer)
+    raw_text: str  # the raw OCR'd text for debugging
+
+
 @dataclass
 class TimeBurnEvent:
     """A detected time-burn or time-gain popup event."""

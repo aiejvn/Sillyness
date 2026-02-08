@@ -1,12 +1,12 @@
-"""CLI entry point for time-burn extraction.
+"""CLI entry point for bio energy extraction.
 
 Usage:
-    python run_time_burn.py <session_screens_dir> [--output results.json]
-    python run_time_burn.py <examples_dir> --validate
+    python run_bio_energy.py <session_screens_dir> [--output results.json]
+    python run_bio_energy.py <examples_dir> --validate
 
 Example:
-    python run_time_burn.py ../input_capture/re_resistance_captures/won_in_area2/screens -o ../input_capture/re_resistance_captures/won_in_area2/
-    python run_time_burn.py examples --validate
+    python run_bio_energy.py ../input_capture/re_resistance_captures/won_in_area2/screens
+    python run_bio_energy.py examples --validate
 """
 
 import argparse
@@ -18,8 +18,8 @@ from dataclasses import asdict
 
 from PIL import Image
 
-from schemas import TIME_BURN_POPUP_REGION
-from time_burn import crop_time_region, extract_time_burn, ocr_time_value, parse_delta
+from schemas import BIO_ENERGY_REGION
+from bio_energy import crop_region, extract_bio_energy, ocr_bio_value, parse_bio_value
 
 
 def run_validation(
@@ -27,7 +27,7 @@ def run_validation(
     equalization: str | None = None,
     thresholding: str | None = None,
     threshold_value: int = 180,
-    scale_factor: int = 3,
+    scale_factor: int = 4,
     invert: bool = True,
     morph_clean: bool = True,
     debug_dir: str | None = None,
@@ -56,7 +56,7 @@ def run_validation(
         reader = csv.DictReader(f)
         for row in reader:
             name = row["name"]
-            expected = int(row["expected_burn_value"])
+            expected = int(row["expected_value"])
 
             img_path = os.path.join(frames_dir, name)
             if not os.path.exists(img_path):
@@ -64,11 +64,11 @@ def run_validation(
                 continue
 
             image = Image.open(img_path)
-            cropped = crop_time_region(image, TIME_BURN_POPUP_REGION)
+            cropped = crop_region(image, BIO_ENERGY_REGION)
             debug_path = None
             if debug_dir:
                 debug_path = os.path.join(debug_dir, name.replace(".jpg", "_thresh.png"))
-            raw_text, sign = ocr_time_value(
+            raw_text = ocr_bio_value(
                 cropped,
                 equalization=equalization,
                 thresholding=thresholding,
@@ -78,31 +78,36 @@ def run_validation(
                 morph_clean=morph_clean,
                 debug_path=debug_path,
             )
-            delta = parse_delta(raw_text, sign)
+            value = parse_bio_value(raw_text)
 
-            if delta == expected:
+            if value == expected:
                 correct += 1
-                status = "✓"
+                status = "OK"
             else:
                 wrong += 1
-                status = "✗"
-                errors.append((name, expected, delta, raw_text, sign))
+                status = "FAIL"
+                errors.append((name, expected, value, raw_text))
 
-            print(f"  {status} {name}: expected={expected:+d}, got={delta} (raw='{raw_text}', sign={sign})")
+            print(f"  {status} {name}: expected={expected}, got={value} (raw='{raw_text}')")
+
+    total = correct + wrong
+    if total == 0:
+        print("No frames to validate.")
+        return
 
     print(f"\n{'='*50}")
-    print(f"Results: {correct} correct, {wrong} wrong out of {correct + wrong} total")
-    print(f"Accuracy: {100 * correct / (correct + wrong):.1f}%")
+    print(f"Results: {correct} correct, {wrong} wrong out of {total} total")
+    print(f"Accuracy: {100 * correct / total:.1f}%")
 
     if errors:
         print(f"\nErrors:")
-        for name, expected, got, raw, sign in errors:
-            print(f"  {name}: expected {expected:+d}, got {got} (raw='{raw}', sign={sign})")
+        for name, expected, got, raw in errors:
+            print(f"  {name}: expected {expected}, got {got} (raw='{raw}')")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Extract time-burn events from captured game frames."
+        description="Extract bio energy readings from captured game frames."
     )
     parser.add_argument(
         "frames_dir",
@@ -111,7 +116,7 @@ def main():
     parser.add_argument(
         "--output", "-o",
         default=None,
-        help="Path to save results as JSON. Defaults to <frames_dir>/time_burn_events.json.",
+        help="Path to save results as JSON. Defaults to <frames_dir>/bio_energy_readings.json.",
     )
     parser.add_argument(
         "--validate",
@@ -133,14 +138,14 @@ def main():
     parser.add_argument(
         "--threshold-value", "-tv",
         type=int,
-        default=180,
-        help="Fixed threshold value (0-255) when not using otsu/adaptive. Default: 180.",
+        default=100,
+        help="Fixed threshold value (0-255) when not using otsu/adaptive. Default: 100.",
     )
     parser.add_argument(
         "--scale", "-s",
         type=int,
-        default=3,
-        help="Scale factor for image before OCR. Tesseract works better with larger images. Default: 3.",
+        default=4,
+        help="Scale factor for image before OCR. Default: 4 (bio region is small: 64x76).",
     )
     parser.add_argument(
         "--no-invert",
@@ -177,18 +182,17 @@ def main():
         )
         return
 
-    events = extract_time_burn(args.frames_dir)
+    readings = extract_bio_energy(args.frames_dir)
 
     # Print summary
-    print(f"\nFound {len(events)} time-burn events:\n")
-    for ev in events:
-        sign = "+" if ev.delta > 0 else ""
-        print(f"  frame {ev.frame_number:06d}:  {sign}{ev.delta}s  (raw: '{ev.raw_text}')")
+    print(f"\nFound {len(readings)} bio energy changes:\n")
+    for r in readings:
+        print(f"  frame {r.frame_number:06d}:  bio={r.value}  (raw: '{r.raw_text}')")
 
     # Save to JSON
-    output_path = args.output or f"{args.frames_dir}/time_burn_events.json"
+    output_path = args.output or os.path.join(args.frames_dir, "bio_energy_readings.json")
     with open(output_path, "w") as f:
-        json.dump([asdict(ev) for ev in events], f, indent=2)
+        json.dump([asdict(r) for r in readings], f, indent=2)
     print(f"\nResults saved to {output_path}")
 
 
