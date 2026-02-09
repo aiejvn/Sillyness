@@ -99,8 +99,8 @@ def ocr_bio_value(
     if debug_path:
         cv2.imwrite(debug_path, thresh)
 
-    # Tesseract config: uniform block (PSM 6), digits only
-    config = "--psm 6 -c tessedit_char_whitelist=0123456789"
+    # Tesseract config: single word (PSM 8), digits only
+    config = "--psm 8 -c tessedit_char_whitelist=0123456789"
     text = pytesseract.image_to_string(thresh, config=config).strip()
 
     return text
