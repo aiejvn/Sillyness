@@ -40,6 +40,10 @@ SURVIVOR_FULL_ICON_REGIONS = {
 }
 
 
+# Camera icon region: for detecting camera uptime status
+CAMERA_ICON_REGION = RegionConfig(x=1745, y=81, width=61, height=41)
+
+
 @dataclass
 class SurvivorStatusReading:
     """Color proportions for a survivor status icon at a specific frame.
@@ -81,3 +85,12 @@ class TimeBurnEvent:
     frame_number: int
     delta: int  # negative = time burned (good), positive = time gained (bad)
     raw_text: str  # the raw OCR'd text for debugging
+
+
+@dataclass
+class CameraStatusReading:
+    """Camera uptime status at a specific frame."""
+    frame_number: int
+    red: float  # proportion 0.0-1.0: disabled camera indicator
+    white: float  # proportion: active camera indicator (white pixels)
+    camera_status: str  # "online", "disabled", or "neutral"

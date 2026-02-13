@@ -21,6 +21,7 @@ from PIL import Image
 from schemas import SURVIVOR_HEALTH_BAR_REGIONS, SURVIVOR_FULL_ICON_REGIONS
 from survivor_debuffs import crop_region, classify_health, classify_infection, extract_survivor_debuffs
 
+# Best config so far: python run_survivor_debuffs.py examples/debuffs/ --validate --debug-dir examples/debuffs/debug
 
 def run_validation(
     frames_dir: str,
