@@ -1,0 +1,82 @@
+[
+  {
+    "frame_number": 6977,
+    "survivor_id": 1,
+    "red": 0.0673076923076923,
+    "yellow": 0.4807692307692308,
+    "green": 0.4407051282051282,
+    "purple": 0.011217948717948718,
+    "health_status": "yellow",
+    "infection_level": "none"
+  },
+  {
+    "frame_number": 6977,
+    "survivor_id": 2,
+    "red": 0.009823182711198428,
+    "yellow": 0.3693516699410609,
+    "green": 0.6090373280943026,
+    "purple": 0.011787819253438114,
+    "health_status": "green",
+    "infection_level": "none"
+  },
+  {
+    "frame_number": 6977,
+    "survivor_id": 3,
+    "red": 0.24594419208306295,
+    "yellow": 0.0006489292667099286,
+    "green": 0.0,
+    "purple": 0.7534068786502272,
+    "health_status": "red",
+    "infection_level": "high"
+  },
+  {
+    "frame_number": 6977,
+    "survivor_id": 4,
+    "red": 0.03172737955346651,
+    "yellow": 0.15687426556991774,
+    "green": 0.0,
+    "purple": 0.8113983548766157,
+    "health_status": "yellow",
+    "infection_level": "high"
+  },
+  {
+    "frame_number": 7284,
+    "survivor_id": 1,
+    "red": 0.09838709677419355,
+    "yellow": 0.45483870967741935,
+    "green": 0.4403225806451613,
+    "purple": 0.0064516129032258064,
+    "health_status": "yellow",
+    "infection_level": "none"
+  },
+  {
+    "frame_number": 7284,
+    "survivor_id": 2,
+    "red": 0.1511627906976744,
+    "yellow": 0.0,
+    "green": 0.0,
+    "purple": 0.8488372093023255,
+    "health_status": "red",
+    "infection_level": "high"
+  },
+  {
+    "frame_number": 7284,
+    "survivor_id": 3,
+    "red": 0.04155495978552279,
+    "yellow": 0.0006702412868632708,
+    "green": 0.17761394101876676,
+    "purple": 0.7801608579088471,
+    "health_status": "green",
+    "infection_level": "high"
+  },
+  {
+    "frame_number": 7284,
+    "survivor_id": 4,
+    "red": 0.9969758064516129,
+    "yellow": 0.0030241935483870967,
+    "green": 0.0,
+    "purple": 0.0,
+    "health_status": "red",
+    "infection_level": "none"
+  }
+]

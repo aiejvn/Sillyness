@@ -1,0 +1,9 @@
+name,survivor_id,expected_health,expected_infection
+frame_006977.jpg,1,green,none
+frame_006977.jpg,2,green,none
+frame_006977.jpg,3,red,high
+frame_006977.jpg,4,yellow,high
+frame_007284.jpg,1,green,none
+frame_007284.jpg,2,red,high
+frame_007284.jpg,3,green,high
+frame_007284.jpg,4,red,none
