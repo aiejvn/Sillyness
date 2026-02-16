@@ -6,6 +6,7 @@ over a captured game session directory.
 Usage:
     python run_labelling.py <capture_dir>
     python run_labelling.py ../input_capture/re_resistance_captures/won_in_area2
+    python run_labelling.py ../input_capture/re_resistance_captures/won_in_area2 --display
 
 Args:
     capture_dir: Path to a capture session directory containing a 'screens/' subdirectory
@@ -22,15 +23,25 @@ Output:
 
 import argparse
 import csv
+import glob
 import json
 import logging
 import os
 from dataclasses import asdict
 
-from time_burn import extract_time_burn
-from bio_energy import extract_bio_energy
-from survivor_debuffs import extract_survivor_debuffs
-from camera_uptime import extract_camera_uptime
+import cv2
+import numpy as np
+from PIL import Image
+
+from schemas import (
+    BIO_ENERGY_REGION, TIME_BURN_POPUP_REGION, CAMERA_ICON_REGION,
+    SURVIVOR_HEALTH_BAR_REGIONS, SURVIVOR_FULL_ICON_REGIONS,
+    TimeBurnEvent, BioEnergyReading, SurvivorStatusReading, CameraStatusReading,
+)
+from time_burn import crop_time_region, ocr_time_value, parse_delta
+from bio_energy import crop_region, ocr_bio_value, parse_bio_value
+from survivor_debuffs import classify_health, classify_infection
+from camera_uptime import classify_camera_status
 
 
 CSV_COLUMNS = [
@@ -44,6 +55,8 @@ CSV_COLUMNS = [
     "camera_status",
 ]
 
+WINDOW_NAME = "Data Labelling"
+
 
 def write_combined_csv(path, time_burn_events, bio_readings, survivor_readings, camera_readings):
     """Merge all extraction results into a single per-frame CSV."""
@@ -56,7 +69,6 @@ def write_combined_csv(path, time_burn_events, bio_readings, survivor_readings, 
 
     camera_by_frame = {r.frame_number: r.camera_status for r in camera_readings}
 
-    # All frame numbers from per-frame sources (survivor + camera cover every frame)
     all_frames = sorted(
         set(survivor_by_frame.keys()) | set(camera_by_frame.keys())
     )
@@ -88,7 +100,7 @@ def write_combined_csv(path, time_burn_events, bio_readings, survivor_readings, 
     return len(all_frames)
 
 
-def run_labelling(capture_dir, output_dir=None):
+def run_labelling(capture_dir, output_dir=None, display=False):
     """Run all data labelling tasks on a capture session."""
     screens_dir = os.path.join(capture_dir, "screens")
     if not os.path.exists(screens_dir):
@@ -103,54 +115,34 @@ def run_labelling(capture_dir, output_dir=None):
     logger.info("Starting data labelling pipeline for: %s", capture_dir)
     logger.info("Output directory: %s", output_dir)
 
-    # 1. Time Burn  (best config: otsu thresholding, no morph — baked into extract defaults)
-    logger.info("=" * 60)
-    logger.info("Extracting time burn events...")
-    time_burn_events = extract_time_burn(screens_dir)
-    time_burn_path = os.path.join(output_dir, "time_burn_events.json")
-    with open(time_burn_path, "w") as f:
-        json.dump([asdict(ev) for ev in time_burn_events], f, indent=2)
-    logger.info("Time burn: %d events -> %s", len(time_burn_events), time_burn_path)
+    if display:
+        time_burn_events, bio_readings, survivor_readings, camera_readings = \
+            _run_with_display(screens_dir, logger)
+    else:
+        time_burn_events, bio_readings, survivor_readings, camera_readings = \
+            _run_batch(screens_dir, logger)
 
-    # 2. Bio Energy  (best config: red channel isolation, threshold=100, PSM 8)
-    logger.info("=" * 60)
-    logger.info("Extracting bio energy readings...")
-    bio_readings = extract_bio_energy(screens_dir)
-    bio_path = os.path.join(output_dir, "bio_energy.json")
-    with open(bio_path, "w") as f:
-        json.dump([asdict(r) for r in bio_readings], f, indent=2)
-    logger.info("Bio energy: %d readings -> %s", len(bio_readings), bio_path)
+    # Save individual JSONs
+    for name, data in [
+        ("time_burn_events.json", time_burn_events),
+        ("bio_energy.json", bio_readings),
+        ("survivor_debuffs.json", survivor_readings),
+        ("camera_uptime.json", camera_readings),
+    ]:
+        path = os.path.join(output_dir, name)
+        with open(path, "w") as f:
+            json.dump([asdict(r) for r in data], f, indent=2)
+        logger.info("%s: %d entries -> %s", name, len(data), path)
 
-    # 3. Survivor Debuffs  (best config: sat_floor=50, val_floor=50, dual-region)
-    logger.info("=" * 60)
-    logger.info("Extracting survivor debuff status...")
-    survivor_readings = extract_survivor_debuffs(screens_dir)
-    survivor_path = os.path.join(output_dir, "survivor_debuffs.json")
-    with open(survivor_path, "w") as f:
-        json.dump([asdict(r) for r in survivor_readings], f, indent=2)
-    num_frames = len(survivor_readings) // 4 if survivor_readings else 0
-    logger.info("Survivor debuffs: %d readings (%d frames x 4) -> %s",
-                len(survivor_readings), num_frames, survivor_path)
-
-    # 4. Camera Uptime  (best config: white_threshold=180, sat_floor=50)
-    logger.info("=" * 60)
-    logger.info("Extracting camera uptime status...")
-    camera_readings = extract_camera_uptime(screens_dir)
-    camera_path = os.path.join(output_dir, "camera_uptime.json")
-    with open(camera_path, "w") as f:
-        json.dump([asdict(r) for r in camera_readings], f, indent=2)
-    logger.info("Camera uptime: %d readings -> %s", len(camera_readings), camera_path)
-
-    # 5. Combined CSV
-    logger.info("=" * 60)
-    logger.info("Writing combined labels CSV...")
+    # Combined CSV
     csv_path = os.path.join(output_dir, "labels.csv")
     csv_rows = write_combined_csv(
         csv_path, time_burn_events, bio_readings, survivor_readings, camera_readings,
     )
-    logger.info("Combined CSV: %d rows -> %s", csv_rows, csv_path)
+    logger.info("labels.csv: %d rows -> %s", csv_rows, csv_path)
 
     # Summary
+    num_frames = len(survivor_readings) // 4 if survivor_readings else 0
     logger.info("=" * 60)
     logger.info("Data labelling complete!")
     logger.info("  Time burn events:    %d", len(time_burn_events))
@@ -161,6 +153,118 @@ def run_labelling(capture_dir, output_dir=None):
     logger.info("All results saved to: %s", output_dir)
 
 
+def _run_batch(screens_dir, logger):
+    """Run all extractors in batch mode (no display)."""
+    from time_burn import extract_time_burn
+    from bio_energy import extract_bio_energy
+    from survivor_debuffs import extract_survivor_debuffs
+    from camera_uptime import extract_camera_uptime
+
+    logger.info("Running in batch mode (no display)")
+
+    time_burn_events = extract_time_burn(screens_dir)
+    bio_readings = extract_bio_energy(screens_dir)
+    survivor_readings = extract_survivor_debuffs(screens_dir)
+    camera_readings = extract_camera_uptime(screens_dir)
+
+    return time_burn_events, bio_readings, survivor_readings, camera_readings
+
+
+def _run_with_display(screens_dir, logger):
+    """Single-pass extraction with live frame display."""
+    pattern = os.path.join(screens_dir, "frame_*.jpg")
+    frame_paths = sorted(glob.glob(pattern))
+
+    if not frame_paths:
+        logger.warning("No frame JPEGs found in %s", screens_dir)
+        return [], [], [], []
+
+    logger.info("Processing %d frames with display", len(frame_paths))
+
+    time_burn_events = []
+    bio_readings = []
+    survivor_readings = []
+    camera_readings = []
+
+    # Deduplication state
+    prev_time_delta = None
+    prev_bio_value = None
+
+    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+
+    for i, path in enumerate(frame_paths):
+        basename = os.path.basename(path)
+        frame_number = int(basename.replace("frame_", "").replace(".jpg", ""))
+
+        image = Image.open(path)
+
+        # Display the frame
+        frame_bgr = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+        cv2.imshow(WINDOW_NAME, frame_bgr)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            logger.info("Display closed by user at frame %d", frame_number)
+            break
+
+        # --- Time Burn ---
+        cropped_tb = crop_time_region(image, TIME_BURN_POPUP_REGION)
+        raw_text, sign = ocr_time_value(cropped_tb)
+        if raw_text and sign != 0:
+            delta = parse_delta(raw_text, sign)
+            if delta is not None and delta != prev_time_delta:
+                time_burn_events.append(TimeBurnEvent(
+                    frame_number=frame_number, delta=delta, raw_text=raw_text,
+                ))
+                prev_time_delta = delta
+        else:
+            prev_time_delta = None
+
+        # --- Bio Energy ---
+        cropped_bio = crop_region(image, BIO_ENERGY_REGION)
+        raw_bio = ocr_bio_value(cropped_bio)
+        if raw_bio:
+            bio_val = parse_bio_value(raw_bio)
+            if bio_val is not None and bio_val != prev_bio_value:
+                bio_readings.append(BioEnergyReading(
+                    frame_number=frame_number, value=bio_val, raw_text=raw_bio,
+                ))
+                prev_bio_value = bio_val
+
+        # --- Survivor Debuffs ---
+        for sid in sorted(SURVIVOR_HEALTH_BAR_REGIONS.keys()):
+            health_bar = crop_region(image, SURVIVOR_HEALTH_BAR_REGIONS[sid])
+            full_icon = crop_region(image, SURVIVOR_FULL_ICON_REGIONS[sid])
+            health_result = classify_health(health_bar)
+            infection_result = classify_infection(full_icon)
+            survivor_readings.append(SurvivorStatusReading(
+                frame_number=frame_number,
+                survivor_id=sid,
+                red=health_result["red"],
+                yellow=health_result["yellow"],
+                green=health_result["green"],
+                purple=infection_result["purple"],
+                health_status=health_result["health_status"],
+                infection_level=infection_result["infection_level"],
+            ))
+
+        # --- Camera Uptime ---
+        cropped_cam = crop_region(image, CAMERA_ICON_REGION)
+        cam_result = classify_camera_status(cropped_cam)
+        camera_readings.append(CameraStatusReading(
+            frame_number=frame_number,
+            red=cam_result["red"],
+            white=cam_result["white"],
+            camera_status=cam_result["camera_status"],
+        ))
+
+        if (i + 1) % 100 == 0:
+            logger.info("Processed %d / %d frames", i + 1, len(frame_paths))
+
+    cv2.destroyAllWindows()
+    logger.info("Display pass complete: %d frames processed", len(frame_paths))
+
+    return time_burn_events, bio_readings, survivor_readings, camera_readings
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run all data labelling tasks on a captured game session.",
@@ -168,6 +272,7 @@ def main():
         epilog="""
 Example:
   python run_labelling.py ../input_capture/re_resistance_captures/won_in_area2
+  python run_labelling.py ../input_capture/re_resistance_captures/won_in_area2 --display
   python run_labelling.py ../input_capture/re_resistance_captures/won_in_area2 -o ../labelled_data/won_in_area2
 
 Output files:
@@ -187,6 +292,11 @@ Output files:
         default=None,
         help="Output directory for results. Defaults to capture_dir.",
     )
+    parser.add_argument(
+        "--display", "-d",
+        action="store_true",
+        help="Show each frame in a window as it is being processed. Press 'q' to stop early.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -195,7 +305,7 @@ Output files:
     )
 
     try:
-        run_labelling(args.capture_dir, args.output)
+        run_labelling(args.capture_dir, args.output, display=args.display)
     except FileNotFoundError as e:
         logging.error(str(e))
         return 1

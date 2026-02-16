@@ -10,17 +10,9 @@ from schemas import RegionConfig, CameraStatusReading, CAMERA_ICON_REGION
 
 logger = logging.getLogger(__name__)
 
-# HSV hue ranges (OpenCV uses 0-179 for hue)
-HUE_RANGES = {
-    "red_low": (0, 5),
-    "red_high": (170, 179),
-}
-
-# Debug visualization colors (BGR)
-DEBUG_COLORS = {
-    "red": (0, 0, 255),
-    "white": (255, 255, 255),
-}
+# Exact disabled-camera red in RGB
+DISABLED_RED = (174, 17, 9)
+DISABLED_RED_TOLERANCE = 30  # per-channel Euclidean distance threshold
 
 
 def crop_region(image: Image.Image, region: RegionConfig) -> Image.Image:
@@ -30,59 +22,55 @@ def crop_region(image: Image.Image, region: RegionConfig) -> Image.Image:
 
 def classify_camera_status(
     cropped_camera_icon: Image.Image,
-    sat_floor: int = 50,
-    val_floor: int = 50,
     white_threshold: int = 180,
+    white_sat_ceil: int = 50,
 ) -> dict:
     """Classify camera status from the camera icon region.
 
+    Red detection uses exact RGB color matching against DISABLED_RED (174, 17, 9).
+    White detection uses HSV (low saturation, high value).
+
     Args:
         cropped_camera_icon: The cropped camera icon region.
-        sat_floor: Minimum saturation (0-255) to count a chromatic pixel.
-        val_floor: Minimum value/brightness (0-255) to count a chromatic pixel.
-        white_threshold: Minimum value for white pixels (high V, low S).
+        white_threshold: Minimum value (0-255) for white pixels.
+        white_sat_ceil: Maximum saturation (0-255) for white pixels.
 
     Returns:
         Dict with "red", "white" proportions and "camera_status".
         camera_status is "disabled" (red), "online" (white), or "neutral" (neither).
     """
     img = np.array(cropped_camera_icon)
-    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+    total_pixels = img.shape[0] * img.shape[1]
 
-    h, s, v = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
-
-    # Chromatic pixels: high saturation + high value
-    chromatic = (s >= sat_floor) & (v >= val_floor)
-
-    # White pixels: low saturation + very high value (bright but unsaturated)
-    white_mask = (s < sat_floor) & (v >= white_threshold)
-
-    red_mask = chromatic & (
-        ((h >= HUE_RANGES["red_low"][0]) & (h <= HUE_RANGES["red_low"][1]))
-        | ((h >= HUE_RANGES["red_high"][0]) & (h <= HUE_RANGES["red_high"][1]))
+    # Red detection: RGB Euclidean distance from the exact disabled-camera color
+    r, g, b = img[:, :, 0].astype(np.float32), img[:, :, 1].astype(np.float32), img[:, :, 2].astype(np.float32)
+    dist_sq = (
+        (r - DISABLED_RED[0]) ** 2
+        + (g - DISABLED_RED[1]) ** 2
+        + (b - DISABLED_RED[2]) ** 2
     )
+    red_mask = dist_sq <= DISABLED_RED_TOLERANCE ** 2
+
+    # White detection: low saturation + high brightness in HSV
+    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+    s, v = hsv[:, :, 1], hsv[:, :, 2]
+    white_mask = (s < white_sat_ceil) & (v >= white_threshold)
 
     counts = {
         "red": int(np.sum(red_mask)),
         "white": int(np.sum(white_mask)),
     }
 
-    # Total counted pixels (chromatic + white)
-    total_pixels = int(np.sum(chromatic | white_mask))
-
-    if total_pixels == 0:
-        # No bright pixels → neutral (not viewing camera, dark icon)
-        return {"red": 0.0, "white": 0.0, "camera_status": "neutral"}
-
+    # Proportion of total pixels (not just "interesting" pixels)
     props = {k: counts[k] / total_pixels for k in counts}
 
     # Classification logic:
-    # - If predominantly red → disabled
-    # - If predominantly white → online (active camera shows white)
+    # - If enough pixels match disabled red → disabled
+    # - If enough white pixels → online (camera icon is small on dark bg, so ~10-20% is typical)
     # - Otherwise → neutral
-    if props["red"] > 0.4:
+    if props["red"] > 0.05:
         camera_status = "disabled"
-    elif props["white"] > 0.4:
+    elif props["white"] >= 0.03:
         camera_status = "online"
     else:
         camera_status = "neutral"

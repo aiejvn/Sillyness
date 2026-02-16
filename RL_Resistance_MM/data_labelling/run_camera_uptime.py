@@ -25,9 +25,8 @@ from camera_uptime import crop_region, classify_camera_status, extract_camera_up
 
 def run_validation(
     frames_dir: str,
-    sat_floor: int = 50,
-    val_floor: int = 50,
     white_threshold: int = 180,
+    white_sat_ceil: int = 50,
     debug_dir: str | None = None,
 ):
     """Validate camera status classification against a map.csv file in the given directory.
@@ -42,7 +41,7 @@ def run_validation(
     if debug_dir:
         os.makedirs(debug_dir, exist_ok=True)
 
-    print(f"Saturation floor: {sat_floor}, Value floor: {val_floor}, White threshold: {white_threshold}")
+    print(f"White threshold: {white_threshold}, White sat ceil: {white_sat_ceil}")
     if debug_dir:
         print(f"Debug images: {debug_dir}")
     print()
@@ -71,9 +70,8 @@ def run_validation(
 
             result = classify_camera_status(
                 camera_icon,
-                sat_floor=sat_floor,
-                val_floor=val_floor,
                 white_threshold=white_threshold,
+                white_sat_ceil=white_sat_ceil,
             )
 
             match = result["camera_status"] == expected_status
@@ -123,22 +121,16 @@ def main():
         help="Run validation mode: compare results against map.csv in the frames_dir.",
     )
     parser.add_argument(
-        "--sat-floor",
-        type=int,
-        default=50,
-        help="Minimum saturation (0-255) for a pixel to be counted. Default: 50.",
-    )
-    parser.add_argument(
-        "--val-floor",
-        type=int,
-        default=50,
-        help="Minimum brightness (0-255) for a pixel to be counted. Default: 50.",
-    )
-    parser.add_argument(
         "--white-threshold",
         type=int,
         default=180,
         help="Minimum brightness (0-255) for white pixels (active camera). Default: 180.",
+    )
+    parser.add_argument(
+        "--white-sat-ceil",
+        type=int,
+        default=50,
+        help="Maximum saturation (0-255) for white pixels. Default: 50.",
     )
     parser.add_argument(
         "--debug-dir",
@@ -155,9 +147,8 @@ def main():
     if args.validate:
         run_validation(
             args.frames_dir,
-            sat_floor=args.sat_floor,
-            val_floor=args.val_floor,
             white_threshold=args.white_threshold,
+            white_sat_ceil=args.white_sat_ceil,
             debug_dir=args.debug_dir,
         )
         return
@@ -168,7 +159,7 @@ def main():
     print(f"\nExtracted {len(readings)} camera status readings:\n")
     for r in readings:
         print(f"  frame {r.frame_number:06d}: camera={r.camera_status} | "
-              f"r={r.red:.2f} w={r.white:.2f}")
+              f"r={r.red:.4f} w={r.white:.4f}")
 
     # Save to JSON
     output_path = args.output or os.path.join(args.frames_dir, "camera_uptime.json")

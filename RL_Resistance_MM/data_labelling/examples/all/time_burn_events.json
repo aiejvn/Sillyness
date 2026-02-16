@@ -1,0 +1,32 @@
+[
+  {
+    "frame_number": 2026,
+    "delta": 5,
+    "raw_text": "5"
+  },
+  {
+    "frame_number": 2051,
+    "delta": -9,
+    "raw_text": "9"
+  },
+  {
+    "frame_number": 2054,
+    "delta": 5,
+    "raw_text": "5"
+  },
+  {
+    "frame_number": 2686,
+    "delta": 1,
+    "raw_text": "1"
+  },
+  {
+    "frame_number": 9882,
+    "delta": 3,
+    "raw_text": "3"
+  },
+  {
+    "frame_number": 9883,
+    "delta": 43,
+    "raw_text": "43"
+  }
+]
