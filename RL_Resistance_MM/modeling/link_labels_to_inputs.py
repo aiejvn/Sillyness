@@ -101,7 +101,7 @@ def extract_input_features(frame_json: dict) -> dict:
 
 def link_labels_to_inputs(capture_dir: str, output_dir: str | None = None):
     """Build training dataset by joining frame inputs with labels."""
-    labels_path = os.path.join(capture_dir, "labels.csv")
+    labels_path = os.path.join(capture_dir, "output/labels.csv")
     frames_dir = os.path.join(capture_dir, "frames", "raw")
 
     if not os.path.exists(labels_path):
