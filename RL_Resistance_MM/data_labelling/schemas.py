@@ -41,7 +41,7 @@ SURVIVOR_FULL_ICON_REGIONS = {
 
 
 # Main game clock region: "MM SS" countdown at top-center of screen
-MAIN_CLOCK_REGION = RegionConfig(x=615, y=45, width=225, height=90)
+MAIN_CLOCK_REGION = RegionConfig(x=813, y=56, width=288, height=104)
 
 # Camera icon region: for detecting camera uptime status
 CAMERA_ICON_REGION = RegionConfig(x=1745, y=81, width=61, height=41)

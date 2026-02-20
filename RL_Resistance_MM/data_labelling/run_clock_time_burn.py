@@ -31,7 +31,6 @@ from clock_time_burn import (
 def run_validation(
     frames_dir: str,
     scale_factor: int = 3,
-    threshold_value: int = 180,
     debug_dir: str | None = None,
 ):
     """Validate clock OCR against a map.csv file.
@@ -46,7 +45,7 @@ def run_validation(
     if debug_dir:
         os.makedirs(debug_dir, exist_ok=True)
 
-    print(f"Scale: {scale_factor}x, Threshold: {threshold_value}")
+    print(f"Scale: {scale_factor}x")
     if debug_dir:
         print(f"Debug images: {debug_dir}")
     print()
@@ -78,7 +77,6 @@ def run_validation(
             raw_text = ocr_clock_value(
                 cropped,
                 scale_factor=scale_factor,
-                threshold_value=threshold_value,
                 debug_path=debug_path,
             )
             seconds = parse_clock_text(raw_text)
@@ -111,7 +109,7 @@ def run_validation(
         for name, exp, got, raw in errors:
             print(f"  {name}: expected {exp}s, got {got}s (raw='{raw}')")
 
-
+# Background behind timer may be messy - how can we fix that?
 def main():
     parser = argparse.ArgumentParser(
         description="Detect time burn/gain events by reading the main game clock.",
@@ -147,12 +145,6 @@ Output files (separate from popup-based time_burn):
         help="Scale factor for image before OCR. Default: 3.",
     )
     parser.add_argument(
-        "--threshold-value", "-tv",
-        type=int,
-        default=180,
-        help="Binary threshold for clock digits. Default: 180.",
-    )
-    parser.add_argument(
         "--fps",
         type=int,
         default=60,
@@ -170,17 +162,19 @@ Output files (separate from popup-based time_burn):
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
+    if args.debug_dir:
+        os.makedirs(args.debug_dir, exist_ok=True)
+
     if args.validate:
         run_validation(
             args.frames_dir,
             scale_factor=args.scale,
-            threshold_value=args.threshold_value,
             debug_dir=args.debug_dir,
         )
         return
 
     # Full extraction
-    readings = extract_clock_readings(args.frames_dir)
+    readings = extract_clock_readings(args.frames_dir, debug_dir=args.debug_dir)
     events = detect_time_burn_events(readings, fps=args.fps)
 
     output_dir = args.output_dir or args.frames_dir

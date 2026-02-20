@@ -36,25 +36,51 @@ def crop_region(image: Image.Image, region: RegionConfig) -> Image.Image:
 def ocr_clock_value(
     cropped_clock: Image.Image,
     scale_factor: int = 3,
-    threshold_value: int = 180,
     debug_path: str | None = None,
 ) -> str:
     """OCR the main clock region to extract "MM SS" text.
 
-    The clock digits are white/light on a dark background.
+    The clock shows near-white digits on a translucent black overlay.
+    Preprocessing pipeline:
+      1. Crop to the bounding box of the translucent overlay
+      2. Convert to grayscale
+      3. Median filter (3x3) to remove salt-and-pepper noise
+      4. Otsu threshold to isolate bright digits
+      5. Morphological close to fill small gaps in digits
+      6. Scale up, pad, and feed to Tesseract with digit whitelist
 
     Returns:
         Raw OCR text (e.g. "03 52", "0352", "348").
     """
     img = np.array(cropped_clock)
+
+    # 1. Crop to the bounding box of the translucent overlay.
+    #    The overlay is darker than the surrounding game scene, so look for
+    #    pixels below a darkness threshold to find its extent.
+    gray_full = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    dark_mask = gray_full < 120  # translucent overlay pixels are darker
+    coords = np.argwhere(dark_mask)
+    if coords.size > 0:
+        y0, x0 = coords.min(axis=0)
+        y1, x1 = coords.max(axis=0) + 1
+        img = img[y0:y1, x0:x1]
+
+    # 2. Convert to grayscale
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+
+    # 3. Median filter (3×3) to remove noise from the translucent overlay
+    gray = cv2.medianBlur(gray, 3)
+
+    # 4. Threshold — Otsu automatically picks the best split for bright digits
+    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+
+    # 5. Morphological close to fill small gaps within digit strokes
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
 
     # Scale up for better OCR
     if scale_factor > 1:
-        gray = cv2.resize(gray, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_CUBIC)
-
-    # Binary threshold — clock digits are bright on dark background
-    _, thresh = cv2.threshold(gray, threshold_value, 255, cv2.THRESH_BINARY)
+        thresh = cv2.resize(thresh, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_CUBIC)
 
     # Pad with white border so digits don't touch image edges
     pad = 20
@@ -115,6 +141,7 @@ def parse_clock_text(raw_text: str) -> int | None:
 def extract_clock_readings(
     frames_dir: str,
     region: RegionConfig = MAIN_CLOCK_REGION,
+    debug_dir: str | None = None,
 ) -> list[ClockReading]:
     """OCR the main clock from every frame, return deduplicated readings.
 
@@ -127,6 +154,9 @@ def extract_clock_readings(
         logger.warning("No frame JPEGs found in %s", frames_dir)
         return []
 
+    if debug_dir:
+        os.makedirs(debug_dir, exist_ok=True)
+
     logger.info("Processing %d frames from %s", len(frame_paths), frames_dir)
 
     readings: list[ClockReading] = []
@@ -138,7 +168,13 @@ def extract_clock_readings(
 
         image = Image.open(path)
         cropped = crop_region(image, region)
-        raw_text = ocr_clock_value(cropped)
+
+        debug_path = None
+        if debug_dir:
+            stem = basename.replace(".jpg", "")
+            debug_path = os.path.join(debug_dir, f"{stem}_clock_thresh.png")
+
+        raw_text = ocr_clock_value(cropped, debug_path=debug_path)
 
         if not raw_text:
             continue
