@@ -35,13 +35,19 @@ from PIL import Image
 
 from schemas import (
     BIO_ENERGY_REGION, TIME_BURN_POPUP_REGION, CAMERA_ICON_REGION,
+    MAIN_CLOCK_REGION,
     SURVIVOR_HEALTH_BAR_REGIONS, SURVIVOR_FULL_ICON_REGIONS,
     TimeBurnEvent, BioEnergyReading, SurvivorStatusReading, CameraStatusReading,
+    ClockReading, ClockTimeBurnEvent,
 )
 from time_burn import crop_time_region, ocr_time_value, parse_delta
 from bio_energy import crop_region, ocr_bio_value, parse_bio_value
 from survivor_debuffs import classify_health, classify_infection
 from camera_uptime import classify_camera_status
+from clock_time_burn import (
+    crop_region as crop_clock_region, ocr_clock_value, parse_clock_text,
+    extract_clock_readings, detect_time_burn_events as detect_clock_events,
+)
 
 
 CSV_COLUMNS = [
@@ -58,9 +64,13 @@ CSV_COLUMNS = [
 WINDOW_NAME = "Data Labelling"
 
 
-def write_combined_csv(path, time_burn_events, bio_readings, survivor_readings, camera_readings):
+def write_combined_csv(path, time_burn_events, bio_readings, survivor_readings, camera_readings, time_burn_mode="clock"):
     """Merge all extraction results into a single per-frame CSV."""
-    time_burn_by_frame = {ev.frame_number: ev.delta for ev in time_burn_events}
+    if time_burn_mode == "clock":
+        # For clock mode, use anomaly as the delta (negative=burn, positive=gain)
+        time_burn_by_frame = {ev.frame_number: ev.anomaly for ev in time_burn_events}
+    else:
+        time_burn_by_frame = {ev.frame_number: ev.delta for ev in time_burn_events}
     bio_by_frame = {r.frame_number: r.value for r in bio_readings}
 
     survivor_by_frame = {}
@@ -100,7 +110,7 @@ def write_combined_csv(path, time_burn_events, bio_readings, survivor_readings, 
     return len(all_frames)
 
 
-def run_labelling(capture_dir, output_dir=None, display=False):
+def run_labelling(capture_dir, output_dir=None, display=False, time_burn_mode="clock"):
     """Run all data labelling tasks on a capture session."""
     screens_dir = os.path.join(capture_dir, "screens")
     if not os.path.exists(screens_dir):
@@ -114,17 +124,19 @@ def run_labelling(capture_dir, output_dir=None, display=False):
     logger = logging.getLogger(__name__)
     logger.info("Starting data labelling pipeline for: %s", capture_dir)
     logger.info("Output directory: %s", output_dir)
+    logger.info("Time burn mode: %s", time_burn_mode)
 
     if display:
         time_burn_events, bio_readings, survivor_readings, camera_readings = \
-            _run_with_display(screens_dir, logger)
+            _run_with_display(screens_dir, logger, time_burn_mode=time_burn_mode)
     else:
         time_burn_events, bio_readings, survivor_readings, camera_readings = \
-            _run_batch(screens_dir, logger)
+            _run_batch(screens_dir, logger, time_burn_mode=time_burn_mode)
 
     # Save individual JSONs
+    tb_json_name = "clock_time_burn_events.json" if time_burn_mode == "clock" else "time_burn_events.json"
     for name, data in [
-        ("time_burn_events.json", time_burn_events),
+        (tb_json_name, time_burn_events),
         ("bio_energy.json", bio_readings),
         ("survivor_debuffs.json", survivor_readings),
         ("camera_uptime.json", camera_readings),
@@ -134,10 +146,18 @@ def run_labelling(capture_dir, output_dir=None, display=False):
             json.dump([asdict(r) for r in data], f, indent=2)
         logger.info("%s: %d entries -> %s", name, len(data), path)
 
+    # Also save clock_readings.json in clock mode
+    if time_burn_mode == "clock" and hasattr(run_labelling, "_clock_readings"):
+        readings_path = os.path.join(output_dir, "clock_readings.json")
+        with open(readings_path, "w") as f:
+            json.dump([asdict(r) for r in run_labelling._clock_readings], f, indent=2)
+        logger.info("clock_readings.json: %d entries -> %s", len(run_labelling._clock_readings), readings_path)
+
     # Combined CSV
     csv_path = os.path.join(output_dir, "labels.csv")
     csv_rows = write_combined_csv(
         csv_path, time_burn_events, bio_readings, survivor_readings, camera_readings,
+        time_burn_mode=time_burn_mode,
     )
     logger.info("labels.csv: %d rows -> %s", csv_rows, csv_path)
 
@@ -153,16 +173,22 @@ def run_labelling(capture_dir, output_dir=None, display=False):
     logger.info("All results saved to: %s", output_dir)
 
 
-def _run_batch(screens_dir, logger):
+def _run_batch(screens_dir, logger, time_burn_mode="clock"):
     """Run all extractors in batch mode (no display)."""
-    from time_burn import extract_time_burn
     from bio_energy import extract_bio_energy
     from survivor_debuffs import extract_survivor_debuffs
     from camera_uptime import extract_camera_uptime
 
     logger.info("Running in batch mode (no display)")
 
-    time_burn_events = extract_time_burn(screens_dir)
+    if time_burn_mode == "clock":
+        clock_readings = extract_clock_readings(screens_dir)
+        time_burn_events = detect_clock_events(clock_readings)
+        run_labelling._clock_readings = clock_readings
+    else:
+        from time_burn import extract_time_burn
+        time_burn_events = extract_time_burn(screens_dir)
+
     bio_readings = extract_bio_energy(screens_dir)
     survivor_readings = extract_survivor_debuffs(screens_dir)
     camera_readings = extract_camera_uptime(screens_dir)
@@ -170,7 +196,7 @@ def _run_batch(screens_dir, logger):
     return time_burn_events, bio_readings, survivor_readings, camera_readings
 
 
-def _run_with_display(screens_dir, logger):
+def _run_with_display(screens_dir, logger, time_burn_mode="clock"):
     """Single-pass extraction with live frame display."""
     pattern = os.path.join(screens_dir, "frame_*.jpg")
     frame_paths = sorted(glob.glob(pattern))
@@ -185,10 +211,12 @@ def _run_with_display(screens_dir, logger):
     bio_readings = []
     survivor_readings = []
     camera_readings = []
+    clock_readings_list = []  # only used in clock mode
 
     # Deduplication state
     prev_time_delta = None
     prev_bio_value = None
+    prev_clock_seconds = None
 
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
 
@@ -206,17 +234,30 @@ def _run_with_display(screens_dir, logger):
             break
 
         # --- Time Burn ---
-        cropped_tb = crop_time_region(image, TIME_BURN_POPUP_REGION)
-        raw_text, sign = ocr_time_value(cropped_tb)
-        if raw_text and sign != 0:
-            delta = parse_delta(raw_text, sign)
-            if delta is not None and delta != prev_time_delta:
-                time_burn_events.append(TimeBurnEvent(
-                    frame_number=frame_number, delta=delta, raw_text=raw_text,
-                ))
-                prev_time_delta = delta
+        if time_burn_mode == "clock":
+            cropped_clock = crop_clock_region(image, MAIN_CLOCK_REGION)
+            raw_text = ocr_clock_value(cropped_clock)
+            if raw_text:
+                seconds = parse_clock_text(raw_text)
+                if seconds is not None and seconds != prev_clock_seconds:
+                    clock_readings_list.append(ClockReading(
+                        frame_number=frame_number,
+                        clock_seconds=seconds,
+                        raw_text=raw_text,
+                    ))
+                    prev_clock_seconds = seconds
         else:
-            prev_time_delta = None
+            cropped_tb = crop_time_region(image, TIME_BURN_POPUP_REGION)
+            raw_text, sign = ocr_time_value(cropped_tb)
+            if raw_text and sign != 0:
+                delta = parse_delta(raw_text, sign)
+                if delta is not None and delta != prev_time_delta:
+                    time_burn_events.append(TimeBurnEvent(
+                        frame_number=frame_number, delta=delta, raw_text=raw_text,
+                    ))
+                    prev_time_delta = delta
+            else:
+                prev_time_delta = None
 
         # --- Bio Energy ---
         cropped_bio = crop_region(image, BIO_ENERGY_REGION)
@@ -262,6 +303,11 @@ def _run_with_display(screens_dir, logger):
     cv2.destroyAllWindows()
     logger.info("Display pass complete: %d frames processed", len(frame_paths))
 
+    # In clock mode, derive burn events from collected readings
+    if time_burn_mode == "clock":
+        time_burn_events = detect_clock_events(clock_readings_list)
+        run_labelling._clock_readings = clock_readings_list
+
     return time_burn_events, bio_readings, survivor_readings, camera_readings
 
 
@@ -297,6 +343,13 @@ Output files:
         action="store_true",
         help="Show each frame in a window as it is being processed. Press 'q' to stop early.",
     )
+    parser.add_argument(
+        "--time-burn-mode", "-tb",
+        choices=["clock", "popup"],
+        default="clock",
+        help="Time burn extraction mode. 'clock' (default) reads the main game clock and "
+             "detects anomalies via frame gap analysis. 'popup' uses the old time burn popup OCR.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -305,7 +358,7 @@ Output files:
     )
 
     try:
-        run_labelling(args.capture_dir, args.output, display=args.display)
+        run_labelling(args.capture_dir, args.output, display=args.display, time_burn_mode=args.time_burn_mode)
     except FileNotFoundError as e:
         logging.error(str(e))
         return 1
