@@ -40,6 +40,9 @@ SURVIVOR_FULL_ICON_REGIONS = {
 }
 
 
+# Main game clock region: "MM SS" countdown at top-center of screen
+MAIN_CLOCK_REGION = RegionConfig(x=615, y=45, width=225, height=90)
+
 # Camera icon region: for detecting camera uptime status
 CAMERA_ICON_REGION = RegionConfig(x=1745, y=81, width=61, height=41)
 
@@ -85,6 +88,30 @@ class TimeBurnEvent:
     frame_number: int
     delta: int  # negative = time burned (good), positive = time gained (bad)
     raw_text: str  # the raw OCR'd text for debugging
+
+
+@dataclass
+class ClockReading:
+    """Main game clock value at a specific frame."""
+    frame_number: int
+    clock_seconds: int  # total seconds remaining (MM*60 + SS)
+    raw_text: str  # raw OCR'd text for debugging
+
+
+@dataclass
+class ClockTimeBurnEvent:
+    """Time burn/gain event detected by comparing consecutive clock readings.
+
+    Uses frame gap to distinguish real burns from normal ticks.
+    At 60 FPS, 1 real second = ~60 frames. Expected clock change = -elapsed_seconds.
+    anomaly = clock_change + elapsed_seconds (positive=gain, negative=burn).
+    """
+    frame_number: int
+    clock_seconds: int  # clock value at this frame
+    delta: int  # raw clock change from previous reading
+    frame_gap: int  # frames elapsed since previous reading
+    elapsed_seconds: float  # frame_gap / fps — real time elapsed
+    anomaly: float  # delta + elapsed_seconds: <0 = burn, >0 = gain
 
 
 @dataclass
