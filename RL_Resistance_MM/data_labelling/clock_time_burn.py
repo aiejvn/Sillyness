@@ -266,3 +266,50 @@ def detect_time_burn_events(
 
     logger.info("Detected %d time burn/gain events", len(events))
     return events
+
+
+def cleanup_spike_deltas(
+    events: list[ClockTimeBurnEvent],
+    spike_threshold: int = 70,
+) -> list[ClockTimeBurnEvent]:
+    """Fix spurious large deltas caused by OCR misreads.
+
+    When |delta| >= spike_threshold, the clock value at that frame is likely
+    garbage. Replace the delta with -(t_spike + t_{spike+1}), where t_spike
+    is the clock_seconds at the spike frame and t_{spike+1} is the
+    clock_seconds at the next event.
+
+    Events at the very end of the list with no successor are left unchanged.
+    """
+    cleaned = list(events)
+
+    for i, ev in enumerate(cleaned):
+        if abs(ev.delta) < spike_threshold:
+            continue
+
+        if i + 1 >= len(cleaned):
+            logger.warning(
+                "Frame %06d: spike delta=%d but no successor event to correct with, skipping",
+                ev.frame_number, ev.delta,
+            )
+            continue
+
+        t_spike = ev.clock_seconds
+        t_next = cleaned[i + 1].clock_seconds
+        corrected_delta = -(t_spike + t_next)
+
+        logger.info(
+            "Frame %06d: correcting spike delta=%d → %d  (t_spike=%d, t_next=%d)",
+            ev.frame_number, ev.delta, corrected_delta, t_spike, t_next,
+        )
+
+        cleaned[i] = ClockTimeBurnEvent(
+            frame_number=ev.frame_number,
+            clock_seconds=ev.clock_seconds,
+            delta=corrected_delta,
+            frame_gap=ev.frame_gap,
+            elapsed_seconds=ev.elapsed_seconds,
+            anomaly=ev.anomaly,
+        )
+
+    return cleaned

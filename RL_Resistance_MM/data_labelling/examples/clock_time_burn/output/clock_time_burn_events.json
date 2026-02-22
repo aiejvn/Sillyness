@@ -146,7 +146,7 @@
   {
     "frame_number": 2658,
     "clock_seconds": 11,
-    "delta": -197,
+    "delta": -15,
     "frame_gap": 23,
     "elapsed_seconds": 0.38,
     "anomaly": -196.62
@@ -162,7 +162,7 @@
   {
     "frame_number": 2661,
     "clock_seconds": 207,
-    "delta": 203,
+    "delta": -413,
     "frame_gap": 2,
     "elapsed_seconds": 0.03,
     "anomaly": 203.03
@@ -370,7 +370,7 @@
   {
     "frame_number": 2887,
     "clock_seconds": 6,
-    "delta": -205,
+    "delta": -216,
     "frame_gap": 19,
     "elapsed_seconds": 0.32,
     "anomaly": -204.68
@@ -378,7 +378,7 @@
   {
     "frame_number": 2889,
     "clock_seconds": 210,
-    "delta": 204,
+    "delta": -419,
     "frame_gap": 2,
     "elapsed_seconds": 0.03,
     "anomaly": 204.03
@@ -394,7 +394,7 @@
   {
     "frame_number": 2903,
     "clock_seconds": 5609,
-    "delta": 5400,
+    "delta": -5818,
     "frame_gap": 1,
     "elapsed_seconds": 0.02,
     "anomaly": 5400.02
@@ -402,7 +402,7 @@
   {
     "frame_number": 2904,
     "clock_seconds": 209,
-    "delta": -5400,
+    "delta": -5818,
     "frame_gap": 1,
     "elapsed_seconds": 0.02,
     "anomaly": -5399.98
@@ -410,7 +410,7 @@
   {
     "frame_number": 2905,
     "clock_seconds": 5609,
-    "delta": 5400,
+    "delta": -5818,
     "frame_gap": 1,
     "elapsed_seconds": 0.02,
     "anomaly": 5400.02
@@ -418,7 +418,7 @@
   {
     "frame_number": 2906,
     "clock_seconds": 209,
-    "delta": -5400,
+    "delta": -417,
     "frame_gap": 1,
     "elapsed_seconds": 0.02,
     "anomaly": -5399.98
@@ -442,7 +442,7 @@
   {
     "frame_number": 2962,
     "clock_seconds": 32,
-    "delta": -175,
+    "delta": -236,
     "frame_gap": 10,
     "elapsed_seconds": 0.17,
     "anomaly": -174.83
@@ -450,7 +450,7 @@
   {
     "frame_number": 2963,
     "clock_seconds": 204,
-    "delta": 172,
+    "delta": -411,
     "frame_gap": 1,
     "elapsed_seconds": 0.02,
     "anomaly": 172.02

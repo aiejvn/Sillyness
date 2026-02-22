@@ -24,7 +24,7 @@ from PIL import Image
 from schemas import MAIN_CLOCK_REGION
 from clock_time_burn import (
     crop_region, ocr_clock_value, parse_clock_text,
-    extract_clock_readings, detect_time_burn_events,
+    extract_clock_readings, detect_time_burn_events, cleanup_spike_deltas,
 )
 
 
@@ -176,6 +176,7 @@ Output files (separate from popup-based time_burn):
     # Full extraction
     readings = extract_clock_readings(args.frames_dir, debug_dir=args.debug_dir)
     events = detect_time_burn_events(readings, fps=args.fps)
+    events = cleanup_spike_deltas(events)
 
     output_dir = args.output_dir or args.frames_dir
     os.makedirs(output_dir, exist_ok=True)
