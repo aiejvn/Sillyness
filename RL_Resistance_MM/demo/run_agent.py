@@ -8,10 +8,10 @@ and translates Q-value outputs into keyboard presses via key_interface.py.
 # ============================================================
 # USER CONFIGURATION
 # ============================================================
-MODEL_PATH = r"C:\Users\Py Torch\Documents\GitHub\Sillyness\RL_Resistance_MM\modeling\checkpoints\2026-03-01-deep_q_v1.pt"
+MODEL_PATH = r"../modeling/checkpoints/2026-03-01-deep_q_v1.pt"
 
 # Window title/class used to locate the game process via pywinauto.
-RESISTANCE_HANDLE = "BIOHAZARD_RESISTANCE"
+RESISTANCE_HANDLE = "RESIDENT EVIL RESISTANCE"
 
 # Screen region to capture. Default: full 1080p display.
 CAPTURE_REGION = {"top": 0, "left": 0, "width": 1920, "height": 1080}
