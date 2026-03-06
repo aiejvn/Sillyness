@@ -8,10 +8,10 @@ and translates Q-value outputs into keyboard presses via key_interface.py.
 # ============================================================
 # USER CONFIGURATION
 # ============================================================
-MODEL_PATH = r"../modeling/checkpoints/2026-03-01-deep_q_v1.pt"
+MODEL_PATH = r"../modeling/checkpoints/2026-03-03-deep_q_v1.pt"
 
 # Window title/class used to locate the game process via pywinauto.
-RESISTANCE_HANDLE = "RESIDENT EVIL RESISTANCE"
+RESISTANCE_HANDLE = "RESIDENT EVIL RESISTANCE / BIOHAZARD RESISTANCE"
 
 # Screen region to capture. Default: full 1080p display.
 CAPTURE_REGION = {"top": 0, "left": 0, "width": 1920, "height": 1080}
@@ -23,14 +23,15 @@ DECISION_THRESHOLD = 0.0
 STEP_DELAY = 0.05
 # ============================================================
 
+import sys
 import time
 from collections import deque
+from pathlib import Path
 from time import sleep
 from typing import List
 
 import mss
 import torch
-import torch.nn as nn
 from PIL import Image
 from torchvision import transforms
 
@@ -39,9 +40,8 @@ from pywinauto.findwindows import find_windows
 
 from key_interface import PressKey, ReleaseKey, KeyPress
 
-# ── Model constants ──────────────────────────────────────────
-IMG_SIZE   = 84
-STACK_SIZE = 20
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "modeling"))
+from experiment import ExperimentConfig, build_model
 
 # ── Key scan codes (Quartz Events / DirectInput) ─────────────
 key_codes = {
@@ -93,43 +93,6 @@ MODEL_ACTION_MAP = {
 }
 
 
-# ── Model definition (matches training notebook cell-11) ─────
-class DecomposedQNetwork(nn.Module):
-    """Q-function decomposed into independent per-action values.
-
-    Input:  (B, stack_size, 84, 84) stacked grayscale frames
-    Output: (B, num_outputs) Q-value score per action dimension
-    """
-
-    def __init__(self, num_outputs: int, stack_size: int = 4):
-        super().__init__()
-        self.num_outputs = num_outputs
-
-        self.cnn = nn.Sequential(
-            nn.Conv2d(stack_size, 32, kernel_size=8, stride=4, padding=1), nn.LazyBatchNorm2d(),
-            nn.ReLU(), nn.MaxPool2d(kernel_size=2, stride=2),
-            nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=1), nn.LazyBatchNorm2d(),
-            nn.ReLU(), nn.MaxPool2d(kernel_size=2, stride=2),
-            nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1), nn.LazyBatchNorm2d(),
-            nn.ReLU(), nn.MaxPool2d(kernel_size=2, stride=2),
-        )
-
-        self.state_fc = nn.Sequential(
-            nn.LazyLinear(4096), nn.LazyBatchNorm1d(),
-            nn.ReLU(),
-            nn.LazyLinear(256), nn.LazyBatchNorm1d(),
-            nn.ReLU(),
-        )
-
-        self.action_heads = nn.Linear(256, num_outputs)
-
-    def forward(self, image: torch.Tensor) -> torch.Tensor:
-        x = self.cnn(image)
-        x = x.view(x.size(0), -1)
-        state = self.state_fc(x)
-        return self.action_heads(state)
-
-
 # ── Window connection ────────────────────────────────────────
 def connect_to_game(handle: str = RESISTANCE_HANDLE) -> Application:
     """Locate the game window by title and return a connected Application.
@@ -153,17 +116,17 @@ class GameAgent:
         self.app         = connect_to_game(handle)
         self.game_window = self.app.window(title_re=handle)
 
-        ckpt = torch.load(model_path, map_location=device)
-        num_outputs      = ckpt["NUM_OUTPUTS"]
-        self.key_columns = ckpt["key_columns"]  # 22 binary key names, in output order
+        ckpt      = torch.load(model_path, map_location=device, weights_only=False)
+        self.cfg  = ExperimentConfig.from_checkpoint(ckpt)
 
-        self.model = DecomposedQNetwork(num_outputs=num_outputs, stack_size=STACK_SIZE)
+        self.key_columns = list(self.cfg.output_columns)
+        self.model = build_model(self.cfg)
         self.model.load_state_dict(ckpt["model_state_dict"])
         self.model.eval()
         self.model.to(device)
 
-        # Deque of preprocessed (1, 84, 84) tensors; fills up over the first STACK_SIZE steps
-        self.frame_stack: deque = deque(maxlen=STACK_SIZE)
+        # Deque of preprocessed frame tensors; fills up over the first stack_size steps
+        self.frame_stack: deque = deque(maxlen=self.cfg.stack_size)
 
         # Scan codes of keys currently held down
         self.pressed: set = set()
@@ -171,7 +134,7 @@ class GameAgent:
         # Must match training preprocessing (notebook cell-9)
         self.transform = transforms.Compose([
             transforms.Grayscale(),
-            transforms.Resize((IMG_SIZE, IMG_SIZE)),
+            transforms.Resize(self.cfg.img_size),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.5], std=[0.5]),
         ])
@@ -197,6 +160,7 @@ class GameAgent:
 
             if should_press and scan_code not in self.pressed:
                 PressKey(scan_code)
+                print(f"{key_name} pressed")
                 self.pressed.add(scan_code)
             elif not should_press and scan_code in self.pressed:
                 ReleaseKey(scan_code)
@@ -213,7 +177,7 @@ class GameAgent:
 
         # Pad stack to STACK_SIZE by repeating the earliest available frame
         stack = list(self.frame_stack)
-        while len(stack) < STACK_SIZE:
+        while len(stack) < self.cfg.stack_size:
             stack.insert(0, stack[0])
 
         state = torch.cat(stack, dim=0).unsqueeze(0).to(self.device)  # (1, 20, 84, 84)
