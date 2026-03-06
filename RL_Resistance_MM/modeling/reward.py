@@ -114,6 +114,7 @@ def compute_reward(
     row: dict,
     prev_row: dict | None = None,
     weights: RewardWeights | None = None,
+    apply_relu: bool = False
 ) -> float:
     """Compute the total scalar reward for a single frame.
 
@@ -149,6 +150,11 @@ def compute_reward(
 
     r_time = compute_time_burn_reward(time_burn_delta)
     r_bio = compute_bio_efficiency_reward(bio_energy, prev_bio, time_burn_delta)
+
+    if apply_relu:
+        r_time = max(0, r_time)
+        r_bio = max(0, r_bio)
+
     r_debuff = compute_survivor_debuff_reward(row)
     r_camera = compute_camera_reward(camera_status)
 
@@ -160,7 +166,7 @@ def compute_reward(
     )
 
 
-def compute_rewards_for_episode(rows: list[dict], weights: RewardWeights | None = None) -> list[float]:
+def compute_rewards_for_episode(rows: list[dict], weights: RewardWeights | None = None, apply_relu: bool = False) -> list[float]:
     """Compute rewards for an entire episode (list of frame rows).
 
     Parameters
@@ -178,6 +184,6 @@ def compute_rewards_for_episode(rows: list[dict], weights: RewardWeights | None 
     rewards = []
     prev_row = None
     for row in rows:
-        rewards.append(compute_reward(row, prev_row=prev_row, weights=weights))
+        rewards.append(compute_reward(row, prev_row=prev_row, weights=weights, apply_relu=apply_relu))
         prev_row = row
     return rewards
