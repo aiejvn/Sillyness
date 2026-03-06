@@ -23,7 +23,7 @@ from typing import Type
 
 import torch.nn as nn
 
-from networks import DecomposedQNetwork, DQN_V1
+from networks import DecomposedQNetwork, DQN_V1, DQN_V1_Mini
 
 
 # ── Output column definitions ────────────────────────────────────────────────
@@ -43,6 +43,7 @@ _ALL_OUTPUT_COLUMNS: list[str] = _KEY_COLUMNS + _MOUSE_COLUMNS
 # Add one entry here whenever a new subclass is added to networks.py.
 _NETWORK_REGISTRY: dict[str, Type[DecomposedQNetwork]] = {
     "DQN_V1": DQN_V1,
+    "DQN_V1.1": DQN_V1_Mini
 }
 
 
@@ -129,7 +130,7 @@ def build_model(cfg: ExperimentConfig) -> DecomposedQNetwork:
 REGISTRY: dict[str, ExperimentConfig] = {
     "deep_q_v1": ExperimentConfig(
         name="deep_q_v1",
-        network_class="DQN_V1",
+        network_class="DQN_V1", # Defined in networks.py
         img_size=(84, 84),
         stack_size=20,
         output_columns=tuple(_ALL_OUTPUT_COLUMNS),
@@ -142,20 +143,19 @@ REGISTRY: dict[str, ExperimentConfig] = {
         train_split=0.8,
         starting_frame=391,
     ),
-    # ── Add new experiments below ────────────────────────────────────────────
-    # "deep_q_v2": ExperimentConfig(
-    #     name="deep_q_v2",
-    #     network_class="DQN_V1",      # or "DQN_V2" once defined in networks.py
-    #     img_size=(84, 84),
-    #     stack_size=20,
-    #     output_columns=tuple(_ALL_OUTPUT_COLUMNS),
-    #     batch_size=64,
-    #     learning_rate=3e-4,
-    #     gamma=0.99,
-    #     num_epochs=30,
-    #     max_early_stop_epochs=5,
-    #     l1_inactive_weight=0.05,
-    #     train_split=0.8,
-    #     starting_frame=391,
-    # ),
+    "deep_q_v1.1": ExperimentConfig( # Smaller debug network, larger input image, no time burn penalties
+        name="deep_q_v1.1",
+        network_class="DQN_V1.1",     
+        img_size=(224, 224),
+        stack_size=20,
+        output_columns=tuple(_ALL_OUTPUT_COLUMNS),
+        batch_size=64,
+        learning_rate=3e-4,
+        gamma=0.99,
+        num_epochs=30,
+        max_early_stop_epochs=5,
+        l1_inactive_weight=0.05,
+        train_split=0.8,
+        starting_frame=391,
+    ),
 }
