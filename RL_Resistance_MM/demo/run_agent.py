@@ -8,7 +8,7 @@ and translates Q-value outputs into keyboard presses via key_interface.py.
 # ============================================================
 # USER CONFIGURATION
 # ============================================================
-MODEL_PATH = r"../modeling/checkpoints/2026-03-03-deep_q_v1.pt"
+MODEL_PATH = r"../modeling/checkpoints/2026-03-06-deep_q_v1.1.pt"
 
 # Window title/class used to locate the game process via pywinauto.
 RESISTANCE_HANDLE = "RESIDENT EVIL RESISTANCE / BIOHAZARD RESISTANCE"
@@ -149,7 +149,8 @@ class GameAgent:
         return self.transform(img)  # (1, 84, 84)
 
     def update_keys(self, q_values: torch.Tensor):
-        """Press or release each mapped key based on its Q-value vs threshold."""
+        """Press or release each mapped key based on its Q-value vs threshold.
+           Each key is mapped using its index in the output columns."""
         for i, col in enumerate(self.key_columns):
             key_name = MODEL_ACTION_MAP.get(col)
             if key_name is None:
