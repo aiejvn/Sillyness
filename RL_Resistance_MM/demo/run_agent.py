@@ -8,7 +8,7 @@ and translates Q-value outputs into keyboard presses via key_interface.py.
 # ============================================================
 # USER CONFIGURATION
 # ============================================================
-MODEL_PATH = r"../modeling/checkpoints/2026-03-06-deep_q_v1.1.pt"
+MODEL_PATH = r"../modeling/checkpoints/2026-03-09-deep_q_v1.1.pt"
 
 # Window title/class used to locate the game process via pywinauto.
 RESISTANCE_HANDLE = "RESIDENT EVIL RESISTANCE / BIOHAZARD RESISTANCE"
