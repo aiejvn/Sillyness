@@ -8,7 +8,7 @@ import time
 
 from schemas import CaptureConfig, InputState
 from input_capture import InputCapture
-from audio_capture import AudioCapture
+# from audio_capture import AudioCapture
 from screen_capture import ScreenCapture
 
 # ==================== MAIN CAPTURE CONTROLLER ====================
@@ -23,11 +23,11 @@ class GameCaptureController:
         
         # Initialize capture modules
         self.input_capture = InputCapture(poll_rate=config.input_poll_rate)
-        self.audio_capture = AudioCapture(
-            sample_rate=config.audio_sample_rate,
-            channels=config.audio_channels,
-            buffer_seconds=config.audio_buffer_seconds
-        )
+        # self.audio_capture = AudioCapture(
+        #     sample_rate=config.audio_sample_rate,
+        #     channels=config.audio_channels,
+        #     buffer_seconds=config.audio_buffer_seconds
+        # )
         self.screen_capture = ScreenCapture(
             target_fps=config.capture_fps,
             resolution=config.screen_resolution
@@ -80,7 +80,7 @@ class GameCaptureController:
         if not self.input_capture.is_running:
             self.input_capture.start()
 
-        self.audio_capture.start()
+        # self.audio_capture.start()
         self.screen_capture.start()
 
         # Start save thread
@@ -106,7 +106,7 @@ class GameCaptureController:
         
         # Stop capture modules
         self.screen_capture.stop()
-        self.audio_capture.stop()
+        # self.audio_capture.stop()
         # Stop input capture
         try:
             self.input_capture.stop()
@@ -135,7 +135,7 @@ class GameCaptureController:
                 
                 if frame:
                     # Get synchronized audio
-                    audio_buffer = self.audio_capture.get_audio_buffer(frame.timestamp)
+                    # audio_buffer = self.audio_capture.get_audio_buffer(frame.timestamp)
                     
                     # Get input events since last frame
                     input_events = self.input_capture.get_events_since(last_frame_time)
@@ -145,7 +145,7 @@ class GameCaptureController:
                     
                     # Create combined data frame
                     frame_data = self._create_frame_data(
-                        frame, audio_buffer, input_events, current_input_state
+                        frame, input_events, current_input_state
                     )
                     
                     # Save to queue for background writing
@@ -160,7 +160,7 @@ class GameCaptureController:
                 self.logger.error(f"Error in capture loop: {e}")
                 time.sleep(0.1)  # Recover from error
                 
-    def _create_frame_data(self, frame, audio_buffer, input_events, input_state):
+    def _create_frame_data(self, frame, input_events, input_state):
         """Create a complete frame data object"""
         # Convert screen frame to base64
         frame_jpeg_base64 = frame.to_jpeg_base64(self.config.compression_quality)
@@ -198,12 +198,12 @@ class GameCaptureController:
                 "regions_of_interest": {}
             },
             
-            "audio_raw": {
-                "format": "wav",  # Would be "opus" in production
-                "duration_ms": audio_buffer.duration * 1000,
-                "data_base64": audio_buffer.data,
-                "timestamp_offset": audio_buffer.timestamp - frame.timestamp
-            },
+            # "audio_raw": {
+            #     "format": "wav",  # Would be "opus" in production
+            #     "duration_ms": audio_buffer.duration * 1000,
+            #     "data_base64": audio_buffer.data,
+            #     "timestamp_offset": audio_buffer.timestamp - frame.timestamp
+            # },
             
             "input_raw": {
                 "keyboard": {
@@ -312,7 +312,7 @@ def main():
         capture_fps=60,
         audio_sample_rate=48000,
         output_dir="./re_resistance_captures",
-        session_id="session_003"
+        session_id="session_004"
     )
     
     # Create controller
