@@ -207,3 +207,4 @@ marimo/_lsp/
 __marimo__/
 advent_of_code_2025/*/*.txt
 RL_Resistance_MM/input_capture/re_resistance_captures/***
+**/*.pt
