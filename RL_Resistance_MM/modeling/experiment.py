@@ -82,6 +82,9 @@ class ExperimentConfig:
     train_split: float
     starting_frame: int                 # frames before this index are skipped
 
+    # Sampling
+    per_space_weight: float = 1.0       # PER upsampling ratio for space-press stacks (1.0 = uniform)
+
     @property
     def num_outputs(self) -> int:
         return len(self.output_columns)
@@ -104,6 +107,7 @@ class ExperimentConfig:
         d = dict(d)
         d["img_size"] = tuple(d["img_size"])
         d["output_columns"] = tuple(d["output_columns"])
+        d.setdefault("per_space_weight", 1.0)  # backwards compat with old checkpoints
         return cls(**d)
 
     @classmethod
@@ -152,10 +156,11 @@ REGISTRY: dict[str, ExperimentConfig] = {
         batch_size=64,
         learning_rate=3e-4,
         gamma=0.99,
-        num_epochs=30,
+        num_epochs=5,
         max_early_stop_epochs=5,
         l1_inactive_weight=0.05,
         train_split=0.8,
         starting_frame=391,
+        per_space_weight=5 # Note: models before 3/15/2026 trained with per_space_weight = 1.0
     ),
 }
