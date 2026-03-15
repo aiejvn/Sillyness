@@ -19,7 +19,7 @@ from torchvision import transforms
 from tqdm import tqdm
 
 from experiment import ExperimentConfig, build_model
-from reward import compute_rewards_for_episode
+from reward import compute_rewards_for_episode, RewardWeights
 
 
 # ── Dataset ──────────────────────────────────────────────────────────────────
@@ -93,7 +93,7 @@ class ResistanceDataset(Dataset):
 
 # ── Data preparation ──────────────────────────────────────────────────────────
 
-def prepare_dataframe(training_csv: str | Path, cfg: ExperimentConfig) -> pd.DataFrame:
+def prepare_dataframe(training_csv: str | Path, cfg: ExperimentConfig, reward_weights: RewardWeights | None = None) -> pd.DataFrame:
     """Load training CSV, compute rewards and discounted returns.
 
     Returns a DataFrame with added columns:
@@ -106,7 +106,7 @@ def prepare_dataframe(training_csv: str | Path, cfg: ExperimentConfig) -> pd.Dat
     print(f"Loaded {len(df)} frames from {training_csv}")
 
     rows = df.to_dict(orient="records")
-    df["reward"] = compute_rewards_for_episode(rows, apply_relu=True)
+    df["reward"] = compute_rewards_for_episode(rows, weights=reward_weights, apply_relu=True)
 
     # Drop outlier rewards (likely extraction artefacts)
     df.loc[df["reward"].abs() >= 100, "reward"] = 0
@@ -276,9 +276,8 @@ def eval_epoch(
     device: torch.device,
     epoch: int,
     l1_weight: float,
-    space_idx: int,
-    check_aggression: bool = False,
-) -> float:
+    space_idx: int
+) -> tuple[float, float]:
     model.eval()
     total_loss           = 0.0
     n_batches            = 0
@@ -292,19 +291,19 @@ def eval_epoch(
 
         q_pred = model(images)
 
-        if check_aggression:
-            space_presses_truth += (actions[:, space_idx] == 1).sum().item()
-            space_presses_hat   += (q_pred[:, space_idx] > 1).sum().item()
+        # Checking aggression
+        space_presses_truth += (actions[:, space_idx] == 1).sum().item()
+        space_presses_hat   += (q_pred[:, space_idx] > 1).sum().item()
 
         loss = masked_q_loss(q_pred, actions, targets, l1_weight, space_idx)
         total_loss += loss.item()
         n_batches  += 1
 
-    if check_aggression:
-        rate = space_presses_hat / max(space_presses_truth, 1)
-        print(f"Play Rate: {rate:.4f}")
+    val_loss = total_loss / max(n_batches, 1)
+    play_rate = space_presses_hat / max(space_presses_truth, 1)
+    print(f"Play Rate: {play_rate:.4f}")
 
-    return total_loss / max(n_batches, 1)
+    return val_loss, play_rate
 
 
 # ── Checkpoint ────────────────────────────────────────────────────────────────

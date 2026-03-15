@@ -109,11 +109,11 @@ def main():
     for epoch in range(1, num_epochs + 1):
         train_loss = train_epoch(model, train_loader, optimizer, device, epoch,
                                  cfg.l1_inactive_weight, space_idx)
-        val_loss   = eval_epoch(model, val_loader, device, epoch,
-                                cfg.l1_inactive_weight, space_idx, check_aggression=True)
+        val_loss, play_rate = eval_epoch(model, val_loader, device, epoch,
+                                         cfg.l1_inactive_weight, space_idx)
         train_losses.append(train_loss)
         val_losses.append(val_loss)
-        print(f"Epoch {epoch:3d}  train={train_loss:.4f}  val={val_loss:.4f}")
+        print(f"Epoch {epoch:3d}  train={train_loss:.4f}  val={val_loss:.4f}  play_rate={play_rate:.4f}")
 
     print(f"\nFinished {len(train_losses)} epochs.")
 

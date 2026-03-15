@@ -19,7 +19,8 @@ from dataclasses import dataclass
 
 @dataclass
 class RewardWeights:
-    """Equal weights for every component (naive baseline)."""
+    """Container obj for all reward weights.
+    By default, uses equal weights for every component (naive baseline)."""
     time_burn: float = 1.0
     bio_efficiency: float = 1.0
     survivor_debuff: float = 1.0
