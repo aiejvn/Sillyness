@@ -53,7 +53,9 @@ PRESETS: list[RewardPreset] = [
     RewardPreset("game_optimal",           RewardWeights(time_burn=2.0, bio_efficiency=1.5, survivor_debuff=2.5, camera_uptime=0.25)),
 ]
 
-PER_WEIGHTS: list[float] = [1, 5, 10, 20]
+# Highly doubt lower PER -> better performance. 
+# Keeping 2 here just in case.
+PER_WEIGHTS: list[float] = [2, 5, 10, 20] 
 
 # Combined-score weighting: lower score is better.
 # play_rate weighted 60% — direct proxy for game-relevant aggression.
