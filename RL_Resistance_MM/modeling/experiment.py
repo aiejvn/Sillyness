@@ -23,7 +23,7 @@ from typing import Type
 
 import torch.nn as nn
 
-from networks import DecomposedQNetwork, DQN_V1, DQN_V1_Mini
+from networks import DecomposedQNetwork, DQN_V1, DQN_V1_Mini, DQN_MultiBranch_Mini, DQN_AnyNet_Mini
 
 
 # ── Output column definitions ────────────────────────────────────────────────
@@ -43,7 +43,9 @@ _ALL_OUTPUT_COLUMNS: list[str] = _KEY_COLUMNS + _MOUSE_COLUMNS
 # Add one entry here whenever a new subclass is added to networks.py.
 _NETWORK_REGISTRY: dict[str, Type[DecomposedQNetwork]] = {
     "DQN_V1": DQN_V1,
-    "DQN_V1.1": DQN_V1_Mini
+    "DQN_V1.1": DQN_V1_Mini,
+    "DQN_MultiBranch_Mini": DQN_MultiBranch_Mini,
+    "DQN_AnyNet_Mini": DQN_AnyNet_Mini,
 }
 
 

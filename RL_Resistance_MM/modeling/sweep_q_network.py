@@ -1,8 +1,8 @@
 """sweep_q_network.py — Hyperparameter sweep over reward weights + PER weight.
 
-Runs a grid of 6 reward presets x 4 PER weights = 24 total training runs,
-each for 5 epochs on the default deep_q_v1.1 model. Ranks results by a
-combined score prioritizing play rate (60%) and eval loss (40%).
+Runs a grid of 3 models x 6 reward presets x 4 PER weights = 72 total training
+runs, each for 3 epochs. Ranks results by a combined score prioritizing play
+rate (60%) and eval loss (40%).
 
 Usage:
     python sweep_q_network.py
@@ -45,7 +45,7 @@ class RewardPreset:
 
 
 PRESETS: list[RewardPreset] = [
-    RewardPreset("baseline",               RewardWeights(time_burn=1.0, bio_efficiency=1.0, survivor_debuff=1.0, camera_uptime=1.0)),
+    # RewardPreset("baseline",               RewardWeights(time_burn=1.0, bio_efficiency=1.0, survivor_debuff=1.0, camera_uptime=1.0)),
     RewardPreset("time_burn_focused",      RewardWeights(time_burn=3.0, bio_efficiency=1.0, survivor_debuff=0.5, camera_uptime=0.5)),
     RewardPreset("debuff_focused",         RewardWeights(time_burn=1.0, bio_efficiency=0.5, survivor_debuff=3.0, camera_uptime=1.0)),
     RewardPreset("bio_efficiency_focused", RewardWeights(time_burn=1.0, bio_efficiency=3.0, survivor_debuff=1.0, camera_uptime=0.5)),
@@ -53,15 +53,21 @@ PRESETS: list[RewardPreset] = [
     RewardPreset("game_optimal",           RewardWeights(time_burn=2.0, bio_efficiency=1.5, survivor_debuff=2.5, camera_uptime=0.25)),
 ]
 
-# Highly doubt lower PER -> better performance. 
-# Keeping 2 here just in case.
-PER_WEIGHTS: list[float] = [2, 5, 10, 20] 
+PER_WEIGHTS: list[float] = [5, 10, 20] 
 
 # Combined-score weighting: lower score is better.
 # play_rate weighted 60% — direct proxy for game-relevant aggression.
 # val_loss weighted 40% — necessary condition for learning anything useful.
 LOSS_WEIGHT = 0.4
 RATE_WEIGHT = 0.6
+
+# ── Model configs ─────────────────────────────────────────────────────────────
+# All derived from deep_q_v1.1 — same hyperparams, different architecture.
+BASE_CONFIGS = [
+    REGISTRY["deep_q_v1.1"],
+    dataclasses.replace(REGISTRY["deep_q_v1.1"], name="deep_q_multibranch_mini", network_class="DQN_MultiBranch_Mini"),
+    dataclasses.replace(REGISTRY["deep_q_v1.1"], name="deep_q_anynet_mini",      network_class="DQN_AnyNet_Mini"),
+]
 
 
 # ── Single run ────────────────────────────────────────────────────────────────
@@ -74,10 +80,10 @@ def run_single(
     base_cfg,
     device: torch.device,
     sweep_ckpt_dir: Path,
-    num_epochs: int = 5,
+    num_epochs: int = 3,
 ) -> dict:
-    """Train one (preset, per_weight) combination and return its metrics."""
-    run_id = f"sweep_{preset.name}_per{int(per_weight)}"
+    """Train one (model, preset, per_weight) combination and return its metrics."""
+    run_id = f"sweep_{base_cfg.name}_{preset.name}_per{int(per_weight)}"
     cfg = dataclasses.replace(
         base_cfg,
         name=run_id,
@@ -129,6 +135,7 @@ def run_single(
 
     return {
         "run_id": run_id,
+        "network": base_cfg.name,
         "per_weight": per_weight,
         "preset_name": preset.name,
         "time_burn": preset.weights.time_burn,
@@ -172,8 +179,6 @@ def main():
                         help="Run 1 epoch per combination to validate paths and grid.")
     args = parser.parse_args()
 
-    base_cfg = REGISTRY["deep_q_v1.1"]
-
     training_csv = Path(args.training_csv) if args.training_csv else \
         PROJECT_ROOT / "data" / "test_won_in_area2" / "training_data.csv"
     screens_dir = Path(args.screens_dir) if args.screens_dir else \
@@ -188,21 +193,25 @@ def main():
     num_epochs = 1 if args.dry_run else 5
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    total_runs = len(PRESETS) * len(PER_WEIGHTS)
-    print(f"Sweep: {len(PRESETS)} presets x {len(PER_WEIGHTS)} PER weights = {total_runs} runs")
+    total_runs = len(BASE_CONFIGS) * len(PRESETS) * len(PER_WEIGHTS)
+    print(f"Sweep: {len(BASE_CONFIGS)} models x {len(PRESETS)} presets x {len(PER_WEIGHTS)} PER weights = {total_runs} runs")
     print(f"Epochs per run: {num_epochs}{'  [DRY RUN]' if args.dry_run else ''}")
     print(f"Device: {device}")
     print(f"Training CSV: {training_csv}")
     print(f"Screens dir:  {screens_dir}\n")
 
-    grid = [(p, w) for p in PRESETS for w in PER_WEIGHTS]
+    today = datetime.date.today().strftime("%Y-%m-%d")
+    suffix = "-dry" if args.dry_run else ""
+    csv_path = results_dir / f"{today}-sweep{suffix}.csv"
+
+    grid = [(b, p, w) for b in BASE_CONFIGS for p in PRESETS for w in PER_WEIGHTS]
     results = []
-    for run_num, (preset, per_weight) in enumerate(grid, start=1):
-        print(f"\n{'='*65}")
-        print(f"Run {run_num}/{total_runs}: preset={preset.name}  PER={per_weight}")
+    for run_num, (base_cfg, preset, per_weight) in enumerate(grid, start=1):
+        print(f"\n{'='*70}")
+        print(f"Run {run_num}/{total_runs}: model={base_cfg.name}  preset={preset.name}  PER={per_weight}")
         print(f"  weights: time_burn={preset.weights.time_burn}  bio={preset.weights.bio_efficiency}"
               f"  debuff={preset.weights.survivor_debuff}  camera={preset.weights.camera_uptime}")
-        print(f"{'='*65}")
+        print(f"{'='*70}")
 
         result = run_single(
             preset, per_weight, training_csv, screens_dir,
@@ -210,25 +219,24 @@ def main():
         )
         results.append(result)
 
+        # Save after every run so results are available if the sweep is interrupted
+        rank_results(results).to_csv(csv_path, index=False)
+        print(f"Results saved ({run_num}/{total_runs}): {csv_path}")
+
     # ── Rank and save ─────────────────────────────────────────────────────────
     df_ranked = rank_results(results)
 
-    today = datetime.date.today().strftime("%Y-%m-%d")
-    suffix = "-dry" if args.dry_run else ""
-    csv_path = results_dir / f"{today}-sweep{suffix}.csv"
-    df_ranked.to_csv(csv_path, index=False)
-
     # ── Print summary ─────────────────────────────────────────────────────────
-    w = 65
+    w = 85
     print(f"\n{'='*w}")
     print(f"SWEEP RESULTS  (score = {LOSS_WEIGHT}*norm_loss + {RATE_WEIGHT}*(1-norm_rate), lower=better)")
     print(f"{'='*w}")
-    header = f"{'Rank':<5} {'Run ID':<38} {'PER':>4} {'ValLoss':>8} {'PlayRate':>9} {'Score':>7}"
+    header = f"{'Rank':<5} {'Network':<26} {'Preset':<24} {'PER':>4} {'ValLoss':>8} {'PlayRate':>9} {'Score':>7}"
     print(header)
     print(f"{'-'*w}")
     for rank, row in df_ranked.iterrows():
         print(
-            f"{rank+1:<5} {row['run_id']:<38} {row['per_weight']:>4.0f} "
+            f"{rank+1:<5} {row['network']:<26} {row['preset_name']:<24} {row['per_weight']:>4.0f} "
             f"{row['final_val_loss']:>8.4f} {row['final_play_rate']:>9.4f} {row['combined_score']:>7.4f}"
         )
     print(f"\nResults saved to: {csv_path}")

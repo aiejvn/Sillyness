@@ -5,7 +5,10 @@ Both the training notebook and demo/run_agent.py import from here.
 
 Hierarchy:
   DecomposedQNetwork (abstract base)
-    └── DQN_V1  — 3-layer CNN + 2-layer FC, LazyBatchNorm throughout
+    ├── DQN_V1              — 3-layer CNN + 2-layer FC, LazyBatchNorm throughout
+    ├── DQN_V1_Mini         — 3-layer CNN + 1-layer FC (smaller debug network)
+    ├── DQN_MultiBranch_Mini — GoogLeNet-style: stem + 2 Inception blocks + FC(256)
+    └── DQN_AnyNet_Mini     — ResNeXt-style: stem + 2 stages × 2 blocks + FC(256)
 
 To add a new architecture: subclass DecomposedQNetwork, implement forward(),
 then register it in experiment._NETWORK_REGISTRY.
@@ -169,7 +172,55 @@ class DQN_AnyNet(DecomposedQNetwork):
 
     def forward(self, image: torch.Tensor):
         return self.net(image)
-    
+
+
+class DQN_AnyNet_Mini(DecomposedQNetwork):
+    """Mini ResNeXt-based network: stem + 2 stages × 2 ResNeXtBlocks + FC(256).
+
+    Roughly matches DQN_V1_Mini in parameter count (~280K at 224×224, stack=20).
+
+    Input:  (B, stack_size, 224, 224) stacked grayscale frames
+    Output: (B, num_outputs) Q-value score per action dimension
+    """
+
+    def __init__(self, num_outputs: int, stack_size: int = 4):
+        super().__init__(num_outputs, stack_size)
+
+        # stem: halve spatial dims, project to 32 channels
+        self.stem = nn.Sequential(
+            nn.LazyConv2d(32, kernel_size=3, stride=2, padding=1),
+            nn.LazyBatchNorm2d(), nn.ReLU(),
+        )
+
+        # stage1: 32 → 128ch, stride=2 on first block  (bot=64, conv2 groups=8)
+        self.stage1 = nn.Sequential(
+            ResNeXtBlock(128, groups=8, bot_mul=0.5, use_1x1conv=True, strides=2),
+            ResNeXtBlock(128, groups=8, bot_mul=0.5),
+        )
+
+        # stage2: 128 → 256ch, stride=2 on first block  (bot=128, conv2 groups=16)
+        self.stage2 = nn.Sequential(
+            ResNeXtBlock(256, groups=8, bot_mul=0.5, use_1x1conv=True, strides=2),
+            ResNeXtBlock(256, groups=8, bot_mul=0.5),
+        )
+
+        self.pool = nn.Sequential(nn.AdaptiveAvgPool2d((1, 1)), nn.Flatten())
+
+        self.state_fc = nn.Sequential(
+            nn.LazyLinear(256), nn.LazyBatchNorm1d(), nn.ReLU(),
+        )
+
+        self.action_heads = nn.Linear(256, num_outputs)
+
+    def forward(self, image: torch.Tensor) -> torch.Tensor:
+        x = self.stem(image)
+        x = self.stage1(x)
+        x = self.stage2(x)
+        x = self.pool(x)
+        state = self.state_fc(x)
+        return self.action_heads(state)
+
+
 ### arch example:
 # depths, channels = (4,6), (32,80)
 # super().__init__(
@@ -239,3 +290,44 @@ class DQN_MultiBranch(DecomposedQNetwork):
 
     def forward(self, image: torch.Tensor):
         return self.net(image)
+
+
+class DQN_MultiBranch_Mini(DecomposedQNetwork):
+    """Mini GoogLeNet-style network: stem + 2 Inception blocks + FC(256).
+
+    Roughly matches DQN_V1_Mini in parameter count (~259K at 224×224, stack=20).
+
+    Input:  (B, stack_size, 224, 224) stacked grayscale frames
+    Output: (B, num_outputs) Q-value score per action dimension
+    """
+
+    def __init__(self, num_outputs: int, stack_size: int = 4):
+        super().__init__(num_outputs, stack_size)
+
+        self.net = nn.Sequential(
+            # Block 1 (stem): large-kernel conv + pool  → 56×56 × 32ch
+            nn.LazyConv2d(32, kernel_size=7, stride=2, padding=3),
+            nn.ReLU(), nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+            # Block 2: bottleneck pair + pool  → 28×28 × 64ch
+            nn.LazyConv2d(32, kernel_size=1), nn.ReLU(),
+            nn.LazyConv2d(64, kernel_size=3, padding=1), nn.ReLU(),
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+            # Block 3: small Inception  → 128ch, then pool → 14×14
+            Inception(32, (32, 64), (8, 16), 16),
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+            # Block 4: larger Inception  → 256ch at 14×14
+            Inception(64, (64, 128), (16, 32), 32),
+            # Global average pool
+            nn.AdaptiveAvgPool2d((1, 1)), nn.Flatten(),
+        )
+
+        self.state_fc = nn.Sequential(
+            nn.LazyLinear(256), nn.LazyBatchNorm1d(), nn.ReLU(),
+        )
+
+        self.action_heads = nn.Linear(256, num_outputs)
+
+    def forward(self, image: torch.Tensor) -> torch.Tensor:
+        x = self.net(image)
+        state = self.state_fc(x)
+        return self.action_heads(state)
