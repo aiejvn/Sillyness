@@ -27,12 +27,16 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from experiment import REGISTRY, build_model
 from reward import RewardWeights
+import torch.distributed as dist
+
 from trainer import (
     prepare_dataframe,
     build_dataloaders,
     train_epoch,
     eval_epoch,
     save_checkpoint,
+    setup_device,
+    wrap_model,
 )
 
 
@@ -81,6 +85,8 @@ def run_single(
     device: torch.device,
     sweep_ckpt_dir: Path,
     num_epochs: int = 3,
+    local_rank: int = 0,
+    world_size: int = 1,
 ) -> dict:
     """Train one (model, preset, per_weight) combination and return its metrics."""
     run_id = f"sweep_{base_cfg.name}_{preset.name}_per{int(per_weight)}"
@@ -97,14 +103,16 @@ def run_single(
         lambda f: (screens_dir / f"frame_{int(f):06d}.jpg").exists()
     )
     df_valid = df[valid_mask].reset_index(drop=True)
-    print(f"Frames with images: {len(df_valid)} / {len(df)}")
+    if local_rank == 0:
+        print(f"Frames with images: {len(df_valid)} / {len(df)}")
 
-    train_loader, val_loader = build_dataloaders(df_valid, screens_dir, cfg)
+    train_loader, val_loader = build_dataloaders(df_valid, screens_dir, cfg,
+                                                 rank=local_rank, world_size=world_size)
 
     # ── Model ─────────────────────────────────────────────────────────────────
     output_columns = list(cfg.output_columns)
     space_idx = output_columns.index("key_space")
-    model = build_model(cfg).to(device)
+    model = wrap_model(build_model(cfg).to(device), device, local_rank, world_size)
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate)
 
     # ── Training loop ─────────────────────────────────────────────────────────
@@ -122,7 +130,8 @@ def run_single(
         )
         train_losses.append(train_loss)
         val_losses.append(val_loss)
-        print(f"Epoch {epoch:3d}  train={train_loss:.4f}  val={val_loss:.4f}  play_rate={play_rate:.4f}")
+        if local_rank == 0:
+            print(f"Epoch {epoch:3d}  train={train_loss:.4f}  val={val_loss:.4f}  play_rate={play_rate:.4f}")
         final_val_loss, final_play_rate = val_loss, play_rate
 
     # ── Save ──────────────────────────────────────────────────────────────────
@@ -191,7 +200,7 @@ def main():
     results_dir.mkdir(parents=True, exist_ok=True)
 
     num_epochs = 1 if args.dry_run else 5
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device, local_rank, world_size = setup_device()
 
     total_runs = len(BASE_CONFIGS) * len(PRESETS) * len(PER_WEIGHTS)
     print(f"Sweep: {len(BASE_CONFIGS)} models x {len(PRESETS)} presets x {len(PER_WEIGHTS)} PER weights = {total_runs} runs")
@@ -216,30 +225,34 @@ def main():
         result = run_single(
             preset, per_weight, training_csv, screens_dir,
             base_cfg, device, sweep_ckpt_dir, num_epochs=num_epochs,
+            local_rank=local_rank, world_size=world_size,
         )
-        results.append(result)
 
-        # Save after every run so results are available if the sweep is interrupted
-        rank_results(results).to_csv(csv_path, index=False)
-        print(f"Results saved ({run_num}/{total_runs}): {csv_path}")
+        if local_rank == 0:
+            results.append(result)
+            # Save after every run so results are available if the sweep is interrupted
+            rank_results(results).to_csv(csv_path, index=False)
+            print(f"Results saved ({run_num}/{total_runs}): {csv_path}")
 
-    # ── Rank and save ─────────────────────────────────────────────────────────
-    df_ranked = rank_results(results)
+    if local_rank == 0:
+        # ── Print summary ─────────────────────────────────────────────────────
+        df_ranked = rank_results(results)
+        w = 85
+        print(f"\n{'='*w}")
+        print(f"SWEEP RESULTS  (score = {LOSS_WEIGHT}*norm_loss + {RATE_WEIGHT}*(1-norm_rate), lower=better)")
+        print(f"{'='*w}")
+        header = f"{'Rank':<5} {'Network':<26} {'Preset':<24} {'PER':>4} {'ValLoss':>8} {'PlayRate':>9} {'Score':>7}"
+        print(header)
+        print(f"{'-'*w}")
+        for rank, row in df_ranked.iterrows():
+            print(
+                f"{rank+1:<5} {row['network']:<26} {row['preset_name']:<24} {row['per_weight']:>4.0f} "
+                f"{row['final_val_loss']:>8.4f} {row['final_play_rate']:>9.4f} {row['combined_score']:>7.4f}"
+            )
+        print(f"\nResults saved to: {csv_path}")
 
-    # ── Print summary ─────────────────────────────────────────────────────────
-    w = 85
-    print(f"\n{'='*w}")
-    print(f"SWEEP RESULTS  (score = {LOSS_WEIGHT}*norm_loss + {RATE_WEIGHT}*(1-norm_rate), lower=better)")
-    print(f"{'='*w}")
-    header = f"{'Rank':<5} {'Network':<26} {'Preset':<24} {'PER':>4} {'ValLoss':>8} {'PlayRate':>9} {'Score':>7}"
-    print(header)
-    print(f"{'-'*w}")
-    for rank, row in df_ranked.iterrows():
-        print(
-            f"{rank+1:<5} {row['network']:<26} {row['preset_name']:<24} {row['per_weight']:>4.0f} "
-            f"{row['final_val_loss']:>8.4f} {row['final_play_rate']:>9.4f} {row['combined_score']:>7.4f}"
-        )
-    print(f"\nResults saved to: {csv_path}")
+    if dist.is_initialized():
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":

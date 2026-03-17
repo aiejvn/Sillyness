@@ -1,0 +1,8 @@
+run_id,network,per_weight,preset_name,time_burn,bio_efficiency,survivor_debuff,camera_uptime,final_val_loss,final_play_rate,norm_loss,norm_rate,combined_score
+sweep_deep_q_v1.1_time_burn_focused_per10,deep_q_v1.1,10,time_burn_focused,3.0,1.0,0.5,0.5,10.389507738749186,66.7,0.0005583697526094862,0.9999999999328859,0.00022334794131224973
+sweep_deep_q_v1.1_time_burn_focused_per5,deep_q_v1.1,5,time_burn_focused,3.0,1.0,0.5,0.5,9.635618774096171,60.7,0.0,0.5973154362015226,0.2416107382790864
+sweep_deep_q_v1.1_time_burn_focused_per20,deep_q_v1.1,20,time_burn_focused,3.0,1.0,0.5,0.5,14.215567874908448,55.5,0.0033921507891571468,0.24832214763434088,0.45236357173505826
+sweep_deep_q_v1.1_bio_efficiency_focused_per5,deep_q_v1.1,5,bio_efficiency_focused,1.0,3.0,1.0,0.5,114.5416254679362,51.8,0.07769889698789914,0.0,0.6310795587951596
+sweep_deep_q_v1.1_debuff_focused_per10,deep_q_v1.1,10,debuff_focused,1.0,0.5,3.0,1.0,1359.7964416503905,55.4,0.9999999999992594,0.24161073823881807,0.8550335570564129
+sweep_deep_q_v1.1_debuff_focused_per5,deep_q_v1.1,5,debuff_focused,1.0,0.5,3.0,1.0,1130.9661743164063,52.1,0.8305162885356652,0.020134228186568452,0.920125978502325
+sweep_deep_q_v1.1_debuff_focused_per20,deep_q_v1.1,20,debuff_focused,1.0,0.5,3.0,1.0,1328.554286702474,52.3,0.9768604195740644,0.03355704697761361,0.9706099396430576

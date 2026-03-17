@@ -7,14 +7,16 @@ Neither file should duplicate any of the logic here.
 from __future__ import annotations
 
 import datetime
+import os
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 from PIL import Image
-from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
+from torch.utils.data import Dataset, DataLoader, DistributedSampler, WeightedRandomSampler
 from torchvision import transforms
 from tqdm import tqdm
 
@@ -136,6 +138,8 @@ def build_dataloaders(
     screens_dir: str | Path,
     cfg: ExperimentConfig,
     seed: int = 42,
+    rank: int = 0,
+    world_size: int = 1,
 ) -> tuple[DataLoader, DataLoader]:
     """Build train and validation DataLoaders with PER for space-press frames.
 
@@ -144,6 +148,8 @@ def build_dataloaders(
         screens_dir: Directory containing frame_NNNNNN.jpg files.
         cfg:         Experiment config (stack_size, img_size, batch_size, etc.)
         seed:        RNG seed for reproducible train/val split.
+        rank:        DDP process rank (0 in single-process mode).
+        world_size:  Total number of DDP processes (1 in single-process mode).
 
     Returns:
         (train_loader, val_loader)
@@ -159,7 +165,10 @@ def build_dataloaders(
 
     n_samples  = len(df_valid) - cfg.stack_size + 1
     all_starts = list(range(n_samples))
-    rng = np.random.default_rng(seed=seed)
+
+    # Offset seed by rank so each process produces a different train/val split,
+    # increasing data diversity across GPUs.
+    rng = np.random.default_rng(seed=seed + rank)
     rng.shuffle(all_starts)
 
     split        = int(n_samples * cfg.train_split)
@@ -172,6 +181,7 @@ def build_dataloaders(
     space_base_rate = df_valid["key_space"].mean()
     print(f"Space-press base rate: {space_base_rate:.2%}  |  PER weight: {cfg.per_space_weight}x")
 
+    # Train: WeightedRandomSampler preserves PER space-press oversampling on every process.
     train_weights = train_ds.get_sample_weights(space_weight=cfg.per_space_weight)
     train_sampler = WeightedRandomSampler(
         weights=train_weights,
@@ -179,8 +189,14 @@ def build_dataloaders(
         replacement=True,
     )
 
+    # Val: DistributedSampler shards across processes so all_reduce gives the global metric.
+    if world_size > 1:
+        val_sampler = DistributedSampler(val_ds, num_replicas=world_size, rank=rank, shuffle=False)
+        val_loader  = DataLoader(val_ds, batch_size=cfg.batch_size, sampler=val_sampler, num_workers=0)
+    else:
+        val_loader  = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False, num_workers=0)
+
     train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, sampler=train_sampler, num_workers=0)
-    val_loader   = DataLoader(val_ds,   batch_size=cfg.batch_size, shuffle=False,          num_workers=0)
 
     print(f"Samples: {n_samples}  (train: {len(train_ds)}, val: {len(val_ds)})")
     return train_loader, val_loader
@@ -252,7 +268,8 @@ def train_epoch(
     model.train()
     total_loss = 0.0
     n_batches  = 0
-    for images, actions, targets in tqdm(loader, desc=f"Epoch {epoch}"):
+    _rank = dist.get_rank() if dist.is_initialized() else 0
+    for images, actions, targets in tqdm(loader, desc=f"Epoch {epoch}", disable=(_rank != 0)):
         images  = images.to(device)
         actions = actions.to(device)
         targets = targets.to(device)
@@ -284,7 +301,8 @@ def eval_epoch(
     space_presses_hat    = 0
     space_presses_truth  = 0
 
-    for images, actions, targets in tqdm(loader, desc=f"Eval {epoch}"):
+    _rank = dist.get_rank() if dist.is_initialized() else 0
+    for images, actions, targets in tqdm(loader, desc=f"Eval {epoch}", disable=(_rank != 0)):
         images  = images.to(device)
         actions = actions.to(device)
         targets = targets.to(device)
@@ -299,11 +317,61 @@ def eval_epoch(
         total_loss += loss.item()
         n_batches  += 1
 
+    # In DDP mode, sum metrics across all processes before computing final values.
+    if dist.is_initialized():
+        t = torch.tensor(
+            [total_loss, float(n_batches), float(space_presses_hat), float(space_presses_truth)],
+            device=device,
+        )
+        dist.all_reduce(t, op=dist.ReduceOp.SUM)
+        total_loss          = t[0].item()
+        n_batches           = int(t[1].item())
+        space_presses_hat   = int(t[2].item())
+        space_presses_truth = int(t[3].item())
+
     val_loss = total_loss / max(n_batches, 1)
     play_rate = space_presses_hat / max(space_presses_truth, 1)
     print(f"Play Rate: {play_rate:.4f}")
 
     return val_loss, play_rate
+
+
+# ── Device utilities ──────────────────────────────────────────────────────────
+
+def setup_device() -> tuple[torch.device, int, int]:
+    """Return (device, local_rank, world_size).
+
+    Single-process mode (LOCAL_RANK not set): local_rank=0, world_size=1.
+    DDP mode (launched via torchrun): initialises the NCCL process group and
+    assigns each process its own CUDA device.
+    """
+    local_rank_str = os.environ.get("LOCAL_RANK")
+    if local_rank_str is None:
+        if torch.cuda.is_available():
+            n = torch.cuda.device_count()
+            print(f"Single-process mode. GPU: {torch.cuda.get_device_name(0)}")
+            if n > 1:
+                print(f"  ({n} GPUs available — launch with torchrun for multi-GPU)")
+            return torch.device("cuda"), 0, 1
+        print("Single-process mode. Using CPU.")
+        return torch.device("cpu"), 0, 1
+
+    local_rank = int(local_rank_str)
+    dist.init_process_group(backend="nccl")
+    world_size = dist.get_world_size()
+    device = torch.device(f"cuda:{local_rank}")
+    torch.cuda.set_device(device)
+    if local_rank == 0:
+        names = ", ".join(torch.cuda.get_device_name(i) for i in range(world_size))
+        print(f"DDP mode: {world_size} GPUs ({names})")
+    return device, local_rank, world_size
+
+
+def wrap_model(model: nn.Module, device: torch.device, local_rank: int, world_size: int) -> nn.Module:
+    """Wrap with DistributedDataParallel when world_size > 1, otherwise no-op."""
+    if world_size > 1:
+        model = nn.parallel.DistributedDataParallel(model, device_ids=[local_rank])
+    return model
 
 
 # ── Checkpoint ────────────────────────────────────────────────────────────────
@@ -316,14 +384,23 @@ def save_checkpoint(
     val_losses: list[float],
     output_dir: str | Path,
 ) -> Path:
-    """Save model + training state to a dated checkpoint file."""
+    """Save model + training state to a dated checkpoint file.
+
+    In DDP mode only rank 0 saves; other ranks return None immediately.
+    The model is always unwrapped before saving so checkpoints are identical
+    whether trained on 1 or N GPUs.
+    """
+    if dist.is_initialized() and dist.get_rank() != 0:
+        return None
+
     output_dir = Path(output_dir)
     output_dir.mkdir(exist_ok=True)
     today = datetime.date.today().strftime("%Y-%m-%d")
     path  = output_dir / f"{today}-{cfg.name}.pt"
 
+    raw_model = model.module if hasattr(model, "module") else model
     torch.save({
-        "model_state_dict":     model.state_dict(),
+        "model_state_dict":     raw_model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "train_losses":         train_losses,
         "val_losses":           val_losses,

@@ -22,12 +22,16 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from experiment import REGISTRY, build_model
+import torch.distributed as dist
+
 from trainer import (
     prepare_dataframe,
     build_dataloaders,
     train_epoch,
     eval_epoch,
     save_checkpoint,
+    setup_device,
+    wrap_model,
 )
 
 
@@ -76,16 +80,17 @@ def main():
         PROJECT_ROOT / "checkpoints"
     num_epochs = args.epochs if args.epochs is not None else cfg.num_epochs
 
-    device       = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device, local_rank, world_size = setup_device()
     output_columns = list(cfg.output_columns)
     space_idx    = output_columns.index("key_space")
 
-    print(f"Experiment:   {cfg.name}")
-    print(f"Network:      {cfg.network_class}")
-    print(f"Device:       {device}")
-    print(f"Epochs:       {num_epochs}")
-    print(f"Training CSV: {training_csv}")
-    print(f"Screens dir:  {screens_dir}")
+    if local_rank == 0:
+        print(f"Experiment:   {cfg.name}")
+        print(f"Network:      {cfg.network_class}")
+        print(f"Device:       {device}")
+        print(f"Epochs:       {num_epochs}")
+        print(f"Training CSV: {training_csv}")
+        print(f"Screens dir:  {screens_dir}")
 
     # ── Data ──────────────────────────────────────────────────────────────────
     df = prepare_dataframe(training_csv, cfg)
@@ -94,12 +99,14 @@ def main():
         lambda f: (screens_dir / f"frame_{int(f):06d}.jpg").exists()
     )
     df_valid = df[valid_mask].reset_index(drop=True)
-    print(f"Frames with images: {len(df_valid)} / {len(df)}")
+    if local_rank == 0:
+        print(f"Frames with images: {len(df_valid)} / {len(df)}")
 
-    train_loader, val_loader = build_dataloaders(df_valid, screens_dir, cfg)
+    train_loader, val_loader = build_dataloaders(df_valid, screens_dir, cfg,
+                                                 rank=local_rank, world_size=world_size)
 
     # ── Model ─────────────────────────────────────────────────────────────────
-    model     = build_model(cfg).to(device)
+    model     = wrap_model(build_model(cfg).to(device), device, local_rank, world_size)
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate)
 
     # ── Training loop ─────────────────────────────────────────────────────────
@@ -113,12 +120,17 @@ def main():
                                          cfg.l1_inactive_weight, space_idx)
         train_losses.append(train_loss)
         val_losses.append(val_loss)
-        print(f"Epoch {epoch:3d}  train={train_loss:.4f}  val={val_loss:.4f}  play_rate={play_rate:.4f}")
+        if local_rank == 0:
+            print(f"Epoch {epoch:3d}  train={train_loss:.4f}  val={val_loss:.4f}  play_rate={play_rate:.4f}")
 
-    print(f"\nFinished {len(train_losses)} epochs.")
+    if local_rank == 0:
+        print(f"\nFinished {len(train_losses)} epochs.")
 
     # ── Save ──────────────────────────────────────────────────────────────────
     save_checkpoint(model, optimizer, cfg, train_losses, val_losses, output_dir)
+
+    if dist.is_initialized():
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":
