@@ -182,11 +182,15 @@ def build_dataloaders(
     print(f"Space-press base rate: {space_base_rate:.2%}  |  PER weight: {cfg.per_space_weight}x")
 
     # Train: WeightedRandomSampler preserves PER space-press oversampling on every process.
+    # Explicit per-rank generator ensures different batches across GPUs in DDP mode.
     train_weights = train_ds.get_sample_weights(space_weight=cfg.per_space_weight)
+    train_generator = torch.Generator()
+    train_generator.manual_seed(seed + rank)
     train_sampler = WeightedRandomSampler(
         weights=train_weights,
         num_samples=len(train_weights),
         replacement=True,
+        generator=train_generator,
     )
 
     # Val: DistributedSampler shards across processes so all_reduce gives the global metric.
