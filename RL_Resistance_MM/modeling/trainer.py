@@ -166,9 +166,9 @@ def build_dataloaders(
     n_samples  = len(df_valid) - cfg.stack_size + 1
     all_starts = list(range(n_samples))
 
-    # Offset seed by rank so each process produces a different train/val split,
-    # increasing data diversity across GPUs.
-    rng = np.random.default_rng(seed=seed + rank)
+    # All ranks use the same seed so the train/val split is identical everywhere.
+    # Per-rank training diversity comes from WeightedRandomSampler (replacement draws).
+    rng = np.random.default_rng(seed=seed)
     rng.shuffle(all_starts)
 
     split        = int(n_samples * cfg.train_split)
