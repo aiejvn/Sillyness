@@ -102,8 +102,9 @@ def main():
     if local_rank == 0:
         print(f"Frames with images: {len(df_valid)} / {len(df)}")
 
-    train_loader, val_loader = build_dataloaders(df_valid, screens_dir, cfg,
-                                                 rank=local_rank, world_size=world_size)
+    train_loader, val_loader, train_generator = build_dataloaders(df_valid, screens_dir, cfg,
+                                                                  rank=local_rank, world_size=world_size)
+    train_base_seed = train_generator.initial_seed()
 
     # ── Model ─────────────────────────────────────────────────────────────────
     model     = wrap_model(build_model(cfg).to(device), device, local_rank, world_size)
@@ -114,6 +115,8 @@ def main():
     val_losses   = []
 
     for epoch in range(1, num_epochs + 1):
+        if world_size > 1: # Re-seed for multi-GPU training
+            train_generator.manual_seed(train_base_seed + epoch - 1)
         train_loss = train_epoch(model, train_loader, optimizer, device, epoch,
                                  cfg.l1_inactive_weight, space_idx)
         val_loss, play_rate = eval_epoch(model, val_loader, device, epoch,

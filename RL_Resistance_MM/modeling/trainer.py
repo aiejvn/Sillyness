@@ -203,7 +203,7 @@ def build_dataloaders(
     train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, sampler=train_sampler, num_workers=0)
 
     print(f"Samples: {n_samples}  (train: {len(train_ds)}, val: {len(val_ds)})")
-    return train_loader, val_loader
+    return train_loader, val_loader, train_generator
 
 
 # ── Loss & training ───────────────────────────────────────────────────────────
