@@ -188,7 +188,7 @@ def build_dataloaders(
     train_generator.manual_seed(seed + rank)
     train_sampler = WeightedRandomSampler(
         weights=train_weights,
-        num_samples=len(train_weights),
+        num_samples=len(train_weights) // world_size,
         replacement=True,
         generator=train_generator,
     )
