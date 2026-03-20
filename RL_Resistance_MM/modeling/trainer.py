@@ -245,6 +245,8 @@ def masked_q_loss(
     # the action was good). Subtract a small bonus from the loss for each such
     # head so that high-confidence correct predictions are encouraged.
     active_high = ((q_pred >= 1) & (actions != 0)).float()
+        # TODO: what if we use (actions > 0) instead? what changes?
+        
     n_active_high = active_high.sum().clamp(min=1)
     confidence_bonus = active_high.sum() / n_active_high  # normalised count → subtract from loss
     mse_loss = mse_loss - confidence_bonus

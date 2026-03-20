@@ -53,8 +53,8 @@ PRESETS: list[RewardPreset] = [
     RewardPreset("time_burn_focused",      RewardWeights(time_burn=3.0, bio_efficiency=1.0, survivor_debuff=0.5, camera_uptime=0.5)),
     RewardPreset("debuff_focused",         RewardWeights(time_burn=1.0, bio_efficiency=0.5, survivor_debuff=3.0, camera_uptime=1.0)),
     # RewardPreset("bio_efficiency_focused", RewardWeights(time_burn=1.0, bio_efficiency=3.0, survivor_debuff=1.0, camera_uptime=0.5)),
-    RewardPreset("camera_deemphasized",    RewardWeights(time_burn=2.0, bio_efficiency=1.0, survivor_debuff=2.0, camera_uptime=0.1)),
-    RewardPreset("game_optimal",           RewardWeights(time_burn=2.0, bio_efficiency=1.5, survivor_debuff=2.5, camera_uptime=0.25)),
+    # RewardPreset("camera_deemphasized",    RewardWeights(time_burn=2.0, bio_efficiency=1.0, survivor_debuff=2.0, camera_uptime=0.1)),
+    # RewardPreset("game_optimal",           RewardWeights(time_burn=2.0, bio_efficiency=1.5, survivor_debuff=2.5, camera_uptime=0.25)),
 ]
 
 PER_WEIGHTS: list[float] = [5, 10, 20] 
