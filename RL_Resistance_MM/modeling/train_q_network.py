@@ -3,13 +3,15 @@
 Equivalent to train_q_network.ipynb but runnable headless from the command line.
 All core logic lives in trainer.py; this file only handles CLI args and orchestration.
 
+Defaults to multi-session mind_over_matter training data. Pass --screens-dir
+to fall back to single-session mode.
+
 Usage:
     python train_q_network.py
-    python train_q_network.py --experiment deep_q_v1
     python train_q_network.py --experiment deep_q_v1.1 --epochs 20
     python train_q_network.py \\
-        --training-csv data/mind_over_matter/training.csv \\
-        --screens-dir ../input_capture/re_resistance_captures/mind_over_matter_area1_win/screens
+        --training-csv data/test_won_in_area2/training_data.csv \\
+        --screens-dir ../input_capture/re_resistance_captures/won_in_area2/screens
 """
 
 import argparse
@@ -49,13 +51,17 @@ def main():
     parser.add_argument(
         "--training-csv",
         default=None,
-        help="Path to training_data.csv. Defaults to data/test_won_in_area2/training_data.csv",
+        help="Path to training CSV. Defaults to data/mind_over_matter/training.csv.",
     )
     parser.add_argument(
         "--screens-dir",
         default=None,
-        help="Path to screens/ directory with frame_NNNNNN.jpg files. "
-             "Defaults to ../input_capture/re_resistance_captures/won_in_area2/screens",
+        help="Single-session screens/ dir (overrides default multi-session mode).",
+    )
+    parser.add_argument(
+        "--sessions-base-dir",
+        default=None,
+        help="Multi-session captures root. Defaults to re_resistance_captures/.",
     )
     parser.add_argument(
         "--output-dir",
@@ -73,9 +79,17 @@ def main():
     cfg = REGISTRY[args.experiment]
 
     training_csv = Path(args.training_csv) if args.training_csv else \
-        PROJECT_ROOT / "data" / "test_won_in_area2" / "training_data.csv"
-    screens_dir = Path(args.screens_dir) if args.screens_dir else \
-        PROJECT_ROOT.parent / "input_capture" / "re_resistance_captures" / "won_in_area2" / "screens"
+        PROJECT_ROOT / "data" / "mind_over_matter" / "training.csv"
+
+    # Resolve screens path: explicit --screens-dir overrides multi-session default.
+    if args.screens_dir:
+        screens_dir = Path(args.screens_dir)
+        sessions_base_dir = None
+    else:
+        screens_dir = None
+        sessions_base_dir = Path(args.sessions_base_dir) if args.sessions_base_dir else \
+            PROJECT_ROOT.parent / "input_capture" / "re_resistance_captures"
+
     output_dir = Path(args.output_dir) if args.output_dir else \
         PROJECT_ROOT / "checkpoints"
     num_epochs = args.epochs if args.epochs is not None else cfg.num_epochs
@@ -90,20 +104,32 @@ def main():
         print(f"Device:       {device}")
         print(f"Epochs:       {num_epochs}")
         print(f"Training CSV: {training_csv}")
-        print(f"Screens dir:  {screens_dir}")
+        if sessions_base_dir:
+            print(f"Sessions base: {sessions_base_dir}")
+        else:
+            print(f"Screens dir:   {screens_dir}")
 
     # ── Data ──────────────────────────────────────────────────────────────────
     df = prepare_dataframe(training_csv, cfg)
 
-    valid_mask = df["frame"].apply(
-        lambda f: (screens_dir / f"frame_{int(f):06d}.jpg").exists()
-    )
+    multi_session = "session" in df.columns
+    if multi_session:
+        valid_mask = df.apply(
+            lambda r: (sessions_base_dir / r["session"] / "screens" / f"frame_{int(r['frame']):06d}.jpg").exists(),
+            axis=1,
+        )
+    else:
+        valid_mask = df["frame"].apply(
+            lambda f: (screens_dir / f"frame_{int(f):06d}.jpg").exists()
+        )
     df_valid = df[valid_mask].reset_index(drop=True)
     if local_rank == 0:
         print(f"Frames with images: {len(df_valid)} / {len(df)}")
 
-    train_loader, val_loader, train_generator = build_dataloaders(df_valid, screens_dir, cfg,
-                                                                  rank=local_rank, world_size=world_size)
+    train_loader, val_loader, train_generator = build_dataloaders(
+        df_valid, cfg, rank=local_rank, world_size=world_size,
+        screens_dir=screens_dir, sessions_base_dir=sessions_base_dir,
+    )
     train_base_seed = train_generator.initial_seed()
 
     # ── Model ─────────────────────────────────────────────────────────────────

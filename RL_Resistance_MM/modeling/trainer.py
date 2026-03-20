@@ -36,29 +36,43 @@ class ResistanceDataset(Dataset):
 
     Decoupling sample selection from the dataframe lets train/val splits be
     spread across the full episode rather than split temporally.
+
+    Supports two path modes:
+    - Single-session: pass `screens_dir` pointing directly to a screens/ folder.
+    - Multi-session: pass `sessions_base_dir` pointing to the captures root; frame
+      paths are resolved as `sessions_base_dir / session / "screens" / frame_NNNNNN.jpg`
+      using the `session` column in the dataframe.
     """
 
     def __init__(
         self,
         dataframe: pd.DataFrame,
-        screens_dir: Path,
         sample_starts: list[int],
         output_columns: list[str],
         transform=None,
         stack_size: int = 4,
+        screens_dir: Path | None = None,
+        sessions_base_dir: Path | None = None,
     ):
         self.df = dataframe
-        self.screens_dir = Path(screens_dir)
         self.sample_starts = sample_starts
         self.output_columns = output_columns
         self.transform = transform
         self.stack_size = stack_size
+        self.screens_dir = Path(screens_dir) if screens_dir is not None else None
+        self.sessions_base_dir = Path(sessions_base_dir) if sessions_base_dir is not None else None
+        self._multi_session = "session" in dataframe.columns
 
     def __len__(self):
         return len(self.sample_starts)
 
-    def _load_frame(self, frame_num: int) -> torch.Tensor:
-        img_path = self.screens_dir / f"frame_{frame_num:06d}.jpg"
+    def _load_frame(self, row_idx: int) -> torch.Tensor:
+        row = self.df.iloc[row_idx]
+        frame_num = int(row["frame"])
+        if self._multi_session and self.sessions_base_dir is not None:
+            img_path = self.sessions_base_dir / row["session"] / "screens" / f"frame_{frame_num:06d}.jpg"
+        else:
+            img_path = self.screens_dir / f"frame_{frame_num:06d}.jpg"
         image = Image.open(img_path).convert("RGB")
         if self.transform:
             image = self.transform(image)
@@ -66,10 +80,7 @@ class ResistanceDataset(Dataset):
 
     def __getitem__(self, idx):
         start = self.sample_starts[idx]
-        frames = [
-            self._load_frame(int(self.df.iloc[start + k]["frame"]))
-            for k in range(self.stack_size)
-        ]
+        frames = [self._load_frame(start + k) for k in range(self.stack_size)]
         stacked = torch.cat(frames, dim=0)  # (STACK_SIZE, H, W)
 
         row = self.df.iloc[start + self.stack_size - 1]
@@ -102,10 +113,14 @@ def prepare_dataframe(training_csv: str | Path, cfg: ExperimentConfig, reward_we
         reward            — normalised per-frame reward
         discounted_return — discounted future return (Q-learning target)
 
-    Rows before cfg.starting_frame and rows with |reward| >= 100 are dropped.
+    Rows with |reward| >= 100 are dropped. Rows before cfg.starting_frame are
+    dropped only for single-session CSVs (multi-session CSVs are pre-trimmed).
+    Discounted returns are computed per-session to avoid cross-session bleed.
     """
     df = pd.read_csv(training_csv)
     print(f"Loaded {len(df)} frames from {training_csv}")
+
+    multi_session = "session" in df.columns
 
     rows = df.to_dict(orient="records")
     df["reward"] = compute_rewards_for_episode(rows, weights=reward_weights, apply_relu=True)
@@ -113,8 +128,10 @@ def prepare_dataframe(training_csv: str | Path, cfg: ExperimentConfig, reward_we
     # Drop outlier rewards (likely extraction artefacts)
     df.loc[df["reward"].abs() >= 100, "reward"] = 0
 
-    # Skip pre-game frames (loading screen / white flash)
-    df = df[df["frame"] >= cfg.starting_frame]
+    # Skip pre-game frames (loading screen / white flash) — single-session only.
+    # Multi-session CSVs are already trimmed at export time.
+    if not multi_session:
+        df = df[df["frame"] >= cfg.starting_frame]
 
     # Normalise rewards to zero mean, unit variance
     reward_mean = df["reward"].mean()
@@ -122,12 +139,21 @@ def prepare_dataframe(training_csv: str | Path, cfg: ExperimentConfig, reward_we
     df["reward"] = (df["reward"] - reward_mean) / (reward_std + 1e-8)
     print(f"Reward normalised: mean={reward_mean:.4f}, std={reward_std:.4f}")
 
-    # Discounted return (backward pass)
+    # Discounted return (backward pass, per-session so returns don't bleed
+    # across session boundaries in multi-session CSVs).
+    df = df.reset_index(drop=True)
     returns = np.zeros(len(df))
-    running = 0.0
-    for t in reversed(range(len(df))):
-        running = df["reward"].iloc[t] + cfg.gamma * running
-        returns[t] = running
+    if multi_session:
+        for _, grp in df.groupby("session", sort=False):
+            running = 0.0
+            for t in reversed(grp.index.tolist()):
+                running = df.at[t, "reward"] + cfg.gamma * running
+                returns[t] = running
+    else:
+        running = 0.0
+        for t in reversed(range(len(df))):
+            running = df["reward"].iloc[t] + cfg.gamma * running
+            returns[t] = running
     df["discounted_return"] = returns
 
     return df
@@ -135,26 +161,32 @@ def prepare_dataframe(training_csv: str | Path, cfg: ExperimentConfig, reward_we
 
 def build_dataloaders(
     df_valid: pd.DataFrame,
-    screens_dir: str | Path,
     cfg: ExperimentConfig,
     seed: int = 42,
     rank: int = 0,
     world_size: int = 1,
+    screens_dir: str | Path | None = None,
+    sessions_base_dir: str | Path | None = None,
 ) -> tuple[DataLoader, DataLoader]:
     """Build train and validation DataLoaders with PER for space-press frames.
 
     Args:
-        df_valid:    DataFrame already filtered to frames with existing screen files.
-        screens_dir: Directory containing frame_NNNNNN.jpg files.
-        cfg:         Experiment config (stack_size, img_size, batch_size, etc.)
-        seed:        RNG seed for reproducible train/val split.
-        rank:        DDP process rank (0 in single-process mode).
-        world_size:  Total number of DDP processes (1 in single-process mode).
+        df_valid:          DataFrame already filtered to frames with existing screen files.
+        cfg:               Experiment config (stack_size, img_size, batch_size, etc.)
+        seed:              RNG seed for reproducible train/val split.
+        rank:              DDP process rank (0 in single-process mode).
+        world_size:        Total number of DDP processes (1 in single-process mode).
+        screens_dir:       Single-session mode — directory containing frame_NNNNNN.jpg.
+        sessions_base_dir: Multi-session mode — captures root; frames resolved as
+                           <sessions_base_dir>/<session>/screens/frame_NNNNNN.jpg.
+
+    Exactly one of screens_dir / sessions_base_dir should be provided.
 
     Returns:
-        (train_loader, val_loader)
+        (train_loader, val_loader, train_generator)
     """
     output_columns = list(cfg.output_columns)
+    multi_session = "session" in df_valid.columns
 
     transform = transforms.Compose([
         transforms.Grayscale(),
@@ -163,8 +195,19 @@ def build_dataloaders(
         transforms.Normalize(mean=[0.5], std=[0.5]),
     ])
 
-    n_samples  = len(df_valid) - cfg.stack_size + 1
-    all_starts = list(range(n_samples))
+    # Build valid start indices, excluding windows that span session boundaries.
+    # session is a string column; set() comparison works correctly on string values.
+    df_valid = df_valid.reset_index(drop=True)
+    if multi_session:
+        session_vals = df_valid["session"].to_numpy()
+        all_starts = [
+            i for i in range(len(df_valid) - cfg.stack_size + 1)
+            if len(set(session_vals[i: i + cfg.stack_size])) == 1
+        ]
+    else:
+        all_starts = list(range(len(df_valid) - cfg.stack_size + 1))
+
+    n_samples = len(all_starts)
 
     # All ranks use the same seed so the train/val split is identical everywhere.
     # Per-rank training diversity comes from WeightedRandomSampler (replacement draws).
@@ -175,10 +218,18 @@ def build_dataloaders(
     train_starts = all_starts[:split]
     val_starts   = all_starts[split:]
 
-    train_ds = ResistanceDataset(df_valid, screens_dir, train_starts, output_columns, transform, cfg.stack_size)
-    val_ds   = ResistanceDataset(df_valid, screens_dir, val_starts,   output_columns, transform, cfg.stack_size)
+    ds_kwargs = dict(
+        output_columns=output_columns,
+        transform=transform,
+        stack_size=cfg.stack_size,
+        screens_dir=screens_dir,
+        sessions_base_dir=sessions_base_dir,
+    )
+    train_ds = ResistanceDataset(df_valid, train_starts, **ds_kwargs)
+    val_ds   = ResistanceDataset(df_valid, val_starts,   **ds_kwargs)
 
     space_base_rate = df_valid["key_space"].mean()
+    print(f"Samples: {n_samples}  (train: {len(train_ds)}, val: {len(val_ds)})")
     print(f"Space-press base rate: {space_base_rate:.2%}  |  PER weight: {cfg.per_space_weight}x")
 
     # Train: WeightedRandomSampler preserves PER space-press oversampling on every process.
@@ -202,7 +253,6 @@ def build_dataloaders(
 
     train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, sampler=train_sampler, num_workers=0)
 
-    print(f"Samples: {n_samples}  (train: {len(train_ds)}, val: {len(val_ds)})")
     return train_loader, val_loader, train_generator
 
 
