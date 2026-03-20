@@ -1,0 +1,2 @@
+run_id,network,per_weight,preset_name,time_burn,bio_efficiency,survivor_debuff,camera_uptime,final_val_loss,final_play_rate,norm_loss,norm_rate,combined_score
+sweep_deep_q_multibranch_mini_time_burn_focused_per5,deep_q_multibranch_mini,5,time_burn_focused,3.0,1.0,0.5,0.5,87.09876251220703,98.25,0.0,0.0,0.6
