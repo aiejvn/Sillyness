@@ -15,9 +15,7 @@ import pandas as pd
 import torch
 import torch.distributed as dist
 import torch.nn as nn
-from PIL import Image
 from torch.utils.data import Dataset, DataLoader, DistributedSampler, WeightedRandomSampler
-from torchvision import transforms
 from tqdm import tqdm
 
 from experiment import ExperimentConfig, build_model
@@ -37,11 +35,18 @@ class ResistanceDataset(Dataset):
     Decoupling sample selection from the dataframe lets train/val splits be
     spread across the full episode rather than split temporally.
 
+    Frames are loaded from pre-processed .npy files (float32, shape 1×H×W,
+    values in [-1, 1]) built by preprocess_frames.py. No runtime transform is
+    applied — np.load → torch.from_numpy is the entire load path.
+
     Supports two path modes:
-    - Single-session: pass `screens_dir` pointing directly to a screens/ folder.
-    - Multi-session: pass `sessions_base_dir` pointing to the captures root; frame
-      paths are resolved as `sessions_base_dir / session / "screens" / frame_NNNNNN.jpg`
-      using the `session` column in the dataframe.
+    - Single-session: `screens_dir` points to the preprocessed screens_{size}/ dir.
+    - Multi-session: `sessions_base_dir` is the captures root; paths are resolved
+      as `sessions_base_dir / session / screens_{img_size[0]} / frame_NNNNNN.npy`.
+
+    Hot-path arrays (_frames, _sessions, _actions_arr, _returns_arr,
+    _key_space_arr) are precomputed from the dataframe at init time to avoid
+    pandas .iloc overhead inside __getitem__.
     """
 
     def __init__(
@@ -49,43 +54,46 @@ class ResistanceDataset(Dataset):
         dataframe: pd.DataFrame,
         sample_starts: list[int],
         output_columns: list[str],
-        transform=None,
+        img_size: tuple[int, int],
         stack_size: int = 4,
         screens_dir: Path | None = None,
         sessions_base_dir: Path | None = None,
     ):
-        self.df = dataframe
         self.sample_starts = sample_starts
-        self.output_columns = output_columns
-        self.transform = transform
         self.stack_size = stack_size
         self.screens_dir = Path(screens_dir) if screens_dir is not None else None
         self.sessions_base_dir = Path(sessions_base_dir) if sessions_base_dir is not None else None
+        self._screens_subdir = f"screens_{img_size[0]}"
         self._multi_session = "session" in dataframe.columns
+
+        # Precompute all hot-path data as numpy arrays — eliminates pandas
+        # .iloc overhead (Series allocation) on every __getitem__ call.
+        self._frames       = dataframe["frame"].to_numpy()
+        self._sessions     = dataframe["session"].to_numpy() if self._multi_session else None
+        self._actions_arr  = dataframe[output_columns].to_numpy(dtype=np.float32)
+        self._returns_arr  = dataframe["discounted_return"].to_numpy(dtype=np.float32)
+        self._key_space_arr = dataframe["key_space"].to_numpy(dtype=np.float32)
 
     def __len__(self):
         return len(self.sample_starts)
 
     def _load_frame(self, row_idx: int) -> torch.Tensor:
-        row = self.df.iloc[row_idx]
-        frame_num = int(row["frame"])
-        if self._multi_session and self.sessions_base_dir is not None:
-            img_path = self.sessions_base_dir / row["session"] / "screens" / f"frame_{frame_num:06d}.jpg"
+        frame_num = int(self._frames[row_idx])
+        if self._multi_session:
+            npy_path = (self.sessions_base_dir / self._sessions[row_idx]
+                        / self._screens_subdir / f"frame_{frame_num:06d}.npy")
         else:
-            img_path = self.screens_dir / f"frame_{frame_num:06d}.jpg"
-        image = Image.open(img_path).convert("RGB")
-        if self.transform:
-            image = self.transform(image)
-        return image
+            npy_path = self.screens_dir / f"frame_{frame_num:06d}.npy"
+        return torch.from_numpy(np.load(npy_path))  # (1, H, W) float32
 
     def __getitem__(self, idx):
         start = self.sample_starts[idx]
         frames = [self._load_frame(start + k) for k in range(self.stack_size)]
         stacked = torch.cat(frames, dim=0)  # (STACK_SIZE, H, W)
 
-        row = self.df.iloc[start + self.stack_size - 1]
-        actions = torch.tensor([row[c] for c in self.output_columns], dtype=torch.float32)
-        target  = torch.tensor(row["discounted_return"], dtype=torch.float32)
+        last = start + self.stack_size - 1
+        actions = torch.from_numpy(self._actions_arr[last])
+        target  = torch.tensor(self._returns_arr[last], dtype=torch.float32)
 
         return stacked, actions, target
 
@@ -98,8 +106,7 @@ class ResistanceDataset(Dataset):
         """
         weights = []
         for start in self.sample_starts:
-            last_row = self.df.iloc[start + self.stack_size - 1]
-            is_space = float(last_row["key_space"]) == 1.0
+            is_space = self._key_space_arr[start + self.stack_size - 1] == 1.0
             weights.append(space_weight if is_space else 1.0)
         return weights
 
@@ -165,35 +172,31 @@ def build_dataloaders(
     seed: int = 42,
     rank: int = 0,
     world_size: int = 1,
+    num_workers: int = 4,
     screens_dir: str | Path | None = None,
     sessions_base_dir: str | Path | None = None,
 ) -> tuple[DataLoader, DataLoader]:
     """Build train and validation DataLoaders with PER for space-press frames.
 
+    Expects frames to have been pre-processed by preprocess_frames.py into
+    screens_{img_size}/ directories containing float32 .npy files — no runtime
+    transform is applied inside the dataset.
+
     Args:
-        df_valid:          DataFrame already filtered to frames with existing screen files.
+        df_valid:          DataFrame already filtered to frames with existing .npy files.
         cfg:               Experiment config (stack_size, img_size, batch_size, etc.)
         seed:              RNG seed for reproducible train/val split.
         rank:              DDP process rank (0 in single-process mode).
         world_size:        Total number of DDP processes (1 in single-process mode).
-        screens_dir:       Single-session mode — directory containing frame_NNNNNN.jpg.
-        sessions_base_dir: Multi-session mode — captures root; frames resolved as
-                           <sessions_base_dir>/<session>/screens/frame_NNNNNN.jpg.
-
-    Exactly one of screens_dir / sessions_base_dir should be provided.
+        num_workers:       DataLoader worker processes (default 4).
+        screens_dir:       Single-session mode — preprocessed screens_{size}/ directory.
+        sessions_base_dir: Multi-session mode — captures root.
 
     Returns:
         (train_loader, val_loader, train_generator)
     """
     output_columns = list(cfg.output_columns)
     multi_session = "session" in df_valid.columns
-
-    transform = transforms.Compose([
-        transforms.Grayscale(),
-        transforms.Resize(cfg.img_size),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.5], std=[0.5]),
-    ])
 
     # Build valid start indices, excluding windows that span session boundaries.
     # session is a string column; set() comparison works correctly on string values.
@@ -220,7 +223,7 @@ def build_dataloaders(
 
     ds_kwargs = dict(
         output_columns=output_columns,
-        transform=transform,
+        img_size=cfg.img_size,
         stack_size=cfg.stack_size,
         screens_dir=screens_dir,
         sessions_base_dir=sessions_base_dir,
@@ -244,14 +247,21 @@ def build_dataloaders(
         generator=train_generator,
     )
 
+    loader_kwargs = dict(
+        batch_size=cfg.batch_size,
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=(num_workers > 0),
+    )
+
     # Val: DistributedSampler shards across processes so all_reduce gives the global metric.
     if world_size > 1:
         val_sampler = DistributedSampler(val_ds, num_replicas=world_size, rank=rank, shuffle=False)
-        val_loader  = DataLoader(val_ds, batch_size=cfg.batch_size, sampler=val_sampler, num_workers=0)
+        val_loader  = DataLoader(val_ds, sampler=val_sampler, **loader_kwargs)
     else:
-        val_loader  = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False, num_workers=0)
+        val_loader  = DataLoader(val_ds, shuffle=False, **loader_kwargs)
 
-    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, sampler=train_sampler, num_workers=0)
+    train_loader = DataLoader(train_ds, sampler=train_sampler, **loader_kwargs)
 
     return train_loader, val_loader, train_generator
 
@@ -335,7 +345,7 @@ def train_epoch(
         q_pred = model(images)
         loss   = masked_q_loss(q_pred, actions, targets, l1_weight, space_idx)
 
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)
         loss.backward()
         optimizer.step()
 

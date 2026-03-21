@@ -54,16 +54,8 @@ class RewardPreset:
 
 
 PRESETS: list[RewardPreset] = [
-    # RewardPreset("baseline",               RewardWeights(time_burn=1.0, bio_efficiency=1.0, survivor_debuff=1.0, camera_uptime=1.0)),
     RewardPreset("time_burn_focused",      RewardWeights(time_burn=3.0, bio_efficiency=1.0,  survivor_debuff=0.5, camera_uptime=0.5)),
-    # RewardPreset("burn_lean",              RewardWeights(time_burn=2.5, bio_efficiency=0.75, survivor_debuff=1.5, camera_uptime=0.5)),
-    # RewardPreset("burn_and_debuff",        RewardWeights(time_burn=3.0, bio_efficiency=0.5,  survivor_debuff=3.0, camera_uptime=0.25)),
     RewardPreset("balanced",               RewardWeights(time_burn=2.0, bio_efficiency=0.75, survivor_debuff=2.0, camera_uptime=0.5)),
-    # RewardPreset("debuff_lean",            RewardWeights(time_burn=1.5, bio_efficiency=0.5,  survivor_debuff=2.5, camera_uptime=0.75)),
-    # RewardPreset("debuff_focused",         RewardWeights(time_burn=1.0, bio_efficiency=0.5,  survivor_debuff=3.0, camera_uptime=1.0)),
-    # RewardPreset("bio_efficiency_focused", RewardWeights(time_burn=1.0, bio_efficiency=3.0, survivor_debuff=1.0, camera_uptime=0.5)),
-    # RewardPreset("camera_deemphasized",    RewardWeights(time_burn=2.0, bio_efficiency=1.0, survivor_debuff=2.0, camera_uptime=0.1)),
-    # RewardPreset("game_optimal",           RewardWeights(time_burn=2.0, bio_efficiency=1.5, survivor_debuff=2.5, camera_uptime=0.25)),
 ]
 
 PER_WEIGHTS: list[float] = [5, 10, 15, 20] 
@@ -110,18 +102,19 @@ def run_single(
     # ── Data ──────────────────────────────────────────────────────────────────
     df = prepare_dataframe(training_csv, cfg, reward_weights=preset.weights)
     multi_session = "session" in df.columns
+    screens_subdir = f"screens_{cfg.img_size[0]}"
     if multi_session:
         valid_mask = df.apply(
-            lambda r: (sessions_base_dir / r["session"] / "screens" / f"frame_{int(r['frame']):06d}.jpg").exists(),
+            lambda r: (sessions_base_dir / r["session"] / screens_subdir / f"frame_{int(r['frame']):06d}.npy").exists(),
             axis=1,
         )
     else:
         valid_mask = df["frame"].apply(
-            lambda f: (screens_dir / f"frame_{int(f):06d}.jpg").exists()
+            lambda f: (screens_dir / f"frame_{int(f):06d}.npy").exists()
         )
     df_valid = df[valid_mask].reset_index(drop=True)
     if local_rank == 0:
-        print(f"Frames with images: {len(df_valid)} / {len(df)}")
+        print(f"Frames with preprocessed .npy: {len(df_valid)} / {len(df)}")
 
     train_loader, val_loader, train_generator = build_dataloaders(
         df_valid, cfg, rank=local_rank, world_size=world_size,

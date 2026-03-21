@@ -113,18 +113,19 @@ def main():
     df = prepare_dataframe(training_csv, cfg)
 
     multi_session = "session" in df.columns
+    screens_subdir = f"screens_{cfg.img_size[0]}"
     if multi_session:
         valid_mask = df.apply(
-            lambda r: (sessions_base_dir / r["session"] / "screens" / f"frame_{int(r['frame']):06d}.jpg").exists(),
+            lambda r: (sessions_base_dir / r["session"] / screens_subdir / f"frame_{int(r['frame']):06d}.npy").exists(),
             axis=1,
         )
     else:
         valid_mask = df["frame"].apply(
-            lambda f: (screens_dir / f"frame_{int(f):06d}.jpg").exists()
+            lambda f: (screens_dir / f"frame_{int(f):06d}.npy").exists()
         )
     df_valid = df[valid_mask].reset_index(drop=True)
     if local_rank == 0:
-        print(f"Frames with images: {len(df_valid)} / {len(df)}")
+        print(f"Frames with preprocessed .npy: {len(df_valid)} / {len(df)}")
 
     train_loader, val_loader, train_generator = build_dataloaders(
         df_valid, cfg, rank=local_rank, world_size=world_size,
