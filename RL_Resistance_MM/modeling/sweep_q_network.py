@@ -89,14 +89,13 @@ def run_single(
     preset: RewardPreset,
     per_weight: float,
     training_csv: Path,
+    lmdb_path: Path,
     base_cfg,
     device: torch.device,
     sweep_ckpt_dir: Path,
     num_epochs: int = 3,
     local_rank: int = 0,
     world_size: int = 1,
-    screens_dir: Path | None = None,
-    sessions_base_dir: Path | None = None,
 ) -> dict:
     """Train one (model, preset, per_weight) combination and return its metrics."""
     run_id = f"sweep_{base_cfg.name}_{preset.name}_per{int(per_weight)}"
@@ -109,23 +108,9 @@ def run_single(
 
     # ── Data ──────────────────────────────────────────────────────────────────
     df = prepare_dataframe(training_csv, cfg, reward_weights=preset.weights)
-    multi_session = "session" in df.columns
-    if multi_session:
-        valid_mask = df.apply(
-            lambda r: (sessions_base_dir / r["session"] / "screens" / f"frame_{int(r['frame']):06d}.jpg").exists(),
-            axis=1,
-        )
-    else:
-        valid_mask = df["frame"].apply(
-            lambda f: (screens_dir / f"frame_{int(f):06d}.jpg").exists()
-        )
-    df_valid = df[valid_mask].reset_index(drop=True)
-    if local_rank == 0:
-        print(f"Frames with images: {len(df_valid)} / {len(df)}")
 
     train_loader, val_loader, train_generator = build_dataloaders(
-        df_valid, cfg, rank=local_rank, world_size=world_size,
-        screens_dir=screens_dir, sessions_base_dir=sessions_base_dir,
+        df, cfg, lmdb_path=lmdb_path, rank=local_rank, world_size=world_size,
     )
     train_base_seed = train_generator.initial_seed()
 
@@ -202,10 +187,8 @@ def main():
     )
     parser.add_argument("--training-csv", default=None,
                         help="Path to training CSV. Defaults to data/mind_over_matter/training.csv.")
-    parser.add_argument("--screens-dir", default=None,
-                        help="Single-session screens/ dir (overrides default multi-session mode).")
-    parser.add_argument("--sessions-base-dir", default=None,
-                        help="Multi-session captures root. Defaults to re_resistance_captures/.")
+    parser.add_argument("--lmdb", default=None,
+                        help="Path to LMDB built by build_lmdb.py. Defaults to data/mind_over_matter/frames.lmdb.")
     parser.add_argument("--output-dir", default=None,
                         help="Parent directory for sweep checkpoints and results.")
     parser.add_argument("--dry-run", action="store_true",
@@ -214,16 +197,8 @@ def main():
 
     training_csv = Path(args.training_csv) if args.training_csv else \
         PROJECT_ROOT / "data" / "mind_over_matter" / "training.csv"
-
-    # Resolve screens path: explicit --screens-dir overrides multi-session default.
-    if args.screens_dir:
-        screens_dir = Path(args.screens_dir)
-        sessions_base_dir = None
-    else:
-        screens_dir = None
-        sessions_base_dir = Path(args.sessions_base_dir) if args.sessions_base_dir else \
-            PROJECT_ROOT.parent / "input_capture" / "re_resistance_captures"
-
+    lmdb_path = Path(args.lmdb) if args.lmdb else \
+        PROJECT_ROOT / "data" / "mind_over_matter" / "frames.lmdb"
     output_dir = Path(args.output_dir) if args.output_dir else PROJECT_ROOT
 
     sweep_ckpt_dir = output_dir / "checkpoints" / "sweep"
@@ -239,10 +214,7 @@ def main():
     print(f"Epochs per run: {num_epochs}{'  [DRY RUN]' if args.dry_run else ''}")
     print(f"Device: {device} \t World Size: {world_size} \t Local Rank: {local_rank}")
     print(f"Training CSV: {training_csv}")
-    if sessions_base_dir:
-        print(f"Sessions base: {sessions_base_dir}\n")
-    else:
-        print(f"Screens dir:   {screens_dir}\n")
+    print(f"LMDB:         {lmdb_path}\n")
 
     today = datetime.date.today().strftime("%Y-%m-%d")
     suffix = "-dry" if args.dry_run else ""
@@ -258,9 +230,8 @@ def main():
         print(f"{'='*70}")
 
         result = run_single(
-            preset, per_weight, training_csv, base_cfg, device, sweep_ckpt_dir,
+            preset, per_weight, training_csv, lmdb_path, base_cfg, device, sweep_ckpt_dir,
             num_epochs=num_epochs, local_rank=local_rank, world_size=world_size,
-            screens_dir=screens_dir, sessions_base_dir=sessions_base_dir,
         )
 
         if local_rank == 0:

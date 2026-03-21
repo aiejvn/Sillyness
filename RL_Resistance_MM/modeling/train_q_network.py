@@ -54,14 +54,9 @@ def main():
         help="Path to training CSV. Defaults to data/mind_over_matter/training.csv.",
     )
     parser.add_argument(
-        "--screens-dir",
+        "--lmdb",
         default=None,
-        help="Single-session screens/ dir (overrides default multi-session mode).",
-    )
-    parser.add_argument(
-        "--sessions-base-dir",
-        default=None,
-        help="Multi-session captures root. Defaults to re_resistance_captures/.",
+        help="Path to LMDB built by build_lmdb.py. Defaults to data/mind_over_matter/frames.lmdb.",
     )
     parser.add_argument(
         "--output-dir",
@@ -80,16 +75,8 @@ def main():
 
     training_csv = Path(args.training_csv) if args.training_csv else \
         PROJECT_ROOT / "data" / "mind_over_matter" / "training.csv"
-
-    # Resolve screens path: explicit --screens-dir overrides multi-session default.
-    if args.screens_dir:
-        screens_dir = Path(args.screens_dir)
-        sessions_base_dir = None
-    else:
-        screens_dir = None
-        sessions_base_dir = Path(args.sessions_base_dir) if args.sessions_base_dir else \
-            PROJECT_ROOT.parent / "input_capture" / "re_resistance_captures"
-
+    lmdb_path = Path(args.lmdb) if args.lmdb else \
+        PROJECT_ROOT / "data" / "mind_over_matter" / "frames.lmdb"
     output_dir = Path(args.output_dir) if args.output_dir else \
         PROJECT_ROOT / "checkpoints"
     num_epochs = args.epochs if args.epochs is not None else cfg.num_epochs

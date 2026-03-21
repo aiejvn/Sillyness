@@ -7,9 +7,11 @@ Neither file should duplicate any of the logic here.
 from __future__ import annotations
 
 import datetime
+import io
 import os
 from pathlib import Path
 
+import lmdb
 import numpy as np
 import pandas as pd
 import torch
@@ -37,11 +39,12 @@ class ResistanceDataset(Dataset):
     Decoupling sample selection from the dataframe lets train/val splits be
     spread across the full episode rather than split temporally.
 
-    Supports two path modes:
-    - Single-session: pass `screens_dir` pointing directly to a screens/ folder.
-    - Multi-session: pass `sessions_base_dir` pointing to the captures root; frame
-      paths are resolved as `sessions_base_dir / session / "screens" / frame_NNNNNN.jpg`
-      using the `session` column in the dataframe.
+    Frames are loaded from an LMDB built by build_lmdb.py. Keys:
+    - Multi-session CSV (has 'session' col): b"{session}/{frame:06d}"
+    - Single-session CSV:                   b"{frame:06d}"
+
+    The LMDB env is opened lazily on first access so the Dataset can be safely
+    pickled and sent to DataLoader workers (spawn mode on Windows).
     """
 
     def __init__(
@@ -49,19 +52,29 @@ class ResistanceDataset(Dataset):
         dataframe: pd.DataFrame,
         sample_starts: list[int],
         output_columns: list[str],
+        lmdb_path: Path,
         transform=None,
         stack_size: int = 4,
-        screens_dir: Path | None = None,
-        sessions_base_dir: Path | None = None,
     ):
         self.df = dataframe
         self.sample_starts = sample_starts
         self.output_columns = output_columns
+        self._lmdb_path = str(lmdb_path)
         self.transform = transform
         self.stack_size = stack_size
-        self.screens_dir = Path(screens_dir) if screens_dir is not None else None
-        self.sessions_base_dir = Path(sessions_base_dir) if sessions_base_dir is not None else None
         self._multi_session = "session" in dataframe.columns
+        self._env = None  # opened lazily — never pickle an open env
+
+    def _get_env(self) -> lmdb.Environment:
+        if self._env is None:
+            self._env = lmdb.open(
+                self._lmdb_path,
+                readonly=True,
+                lock=False,
+                readahead=False,
+                meminit=False,
+            )
+        return self._env
 
     def __len__(self):
         return len(self.sample_starts)
@@ -69,11 +82,13 @@ class ResistanceDataset(Dataset):
     def _load_frame(self, row_idx: int) -> torch.Tensor:
         row = self.df.iloc[row_idx]
         frame_num = int(row["frame"])
-        if self._multi_session and self.sessions_base_dir is not None:
-            img_path = self.sessions_base_dir / row["session"] / "screens" / f"frame_{frame_num:06d}.jpg"
+        if self._multi_session:
+            key = f"{row['session']}/{frame_num:06d}".encode()
         else:
-            img_path = self.screens_dir / f"frame_{frame_num:06d}.jpg"
-        image = Image.open(img_path).convert("RGB")
+            key = f"{frame_num:06d}".encode()
+        with self._get_env().begin(write=False) as txn:
+            buf = txn.get(key)
+        image = Image.open(io.BytesIO(buf)).convert("RGB")
         if self.transform:
             image = self.transform(image)
         return image
@@ -160,33 +175,30 @@ def prepare_dataframe(training_csv: str | Path, cfg: ExperimentConfig, reward_we
 
 
 def build_dataloaders(
-    df_valid: pd.DataFrame,
+    df: pd.DataFrame,
     cfg: ExperimentConfig,
+    lmdb_path: Path,
     seed: int = 42,
     rank: int = 0,
     world_size: int = 1,
-    screens_dir: str | Path | None = None,
-    sessions_base_dir: str | Path | None = None,
+    num_workers: int = 4,
 ) -> tuple[DataLoader, DataLoader]:
     """Build train and validation DataLoaders with PER for space-press frames.
 
     Args:
-        df_valid:          DataFrame already filtered to frames with existing screen files.
-        cfg:               Experiment config (stack_size, img_size, batch_size, etc.)
-        seed:              RNG seed for reproducible train/val split.
-        rank:              DDP process rank (0 in single-process mode).
-        world_size:        Total number of DDP processes (1 in single-process mode).
-        screens_dir:       Single-session mode — directory containing frame_NNNNNN.jpg.
-        sessions_base_dir: Multi-session mode — captures root; frames resolved as
-                           <sessions_base_dir>/<session>/screens/frame_NNNNNN.jpg.
-
-    Exactly one of screens_dir / sessions_base_dir should be provided.
+        df:          Full training DataFrame (rewards + discounted_return already computed).
+        cfg:         Experiment config (stack_size, img_size, batch_size, etc.)
+        lmdb_path:   Path to LMDB built by build_lmdb.py.
+        seed:        RNG seed for reproducible train/val split.
+        rank:        DDP process rank (0 in single-process mode).
+        world_size:  Total number of DDP processes (1 in single-process mode).
+        num_workers: DataLoader worker count (LMDB supports multi-worker via lazy env open).
 
     Returns:
         (train_loader, val_loader, train_generator)
     """
     output_columns = list(cfg.output_columns)
-    multi_session = "session" in df_valid.columns
+    multi_session = "session" in df.columns
 
     transform = transforms.Compose([
         transforms.Grayscale(),
@@ -197,15 +209,15 @@ def build_dataloaders(
 
     # Build valid start indices, excluding windows that span session boundaries.
     # session is a string column; set() comparison works correctly on string values.
-    df_valid = df_valid.reset_index(drop=True)
+    df = df.reset_index(drop=True)
     if multi_session:
-        session_vals = df_valid["session"].to_numpy()
+        session_vals = df["session"].to_numpy()
         all_starts = [
-            i for i in range(len(df_valid) - cfg.stack_size + 1)
+            i for i in range(len(df) - cfg.stack_size + 1)
             if len(set(session_vals[i: i + cfg.stack_size])) == 1
         ]
     else:
-        all_starts = list(range(len(df_valid) - cfg.stack_size + 1))
+        all_starts = list(range(len(df) - cfg.stack_size + 1))
 
     n_samples = len(all_starts)
 
@@ -220,15 +232,14 @@ def build_dataloaders(
 
     ds_kwargs = dict(
         output_columns=output_columns,
+        lmdb_path=lmdb_path,
         transform=transform,
         stack_size=cfg.stack_size,
-        screens_dir=screens_dir,
-        sessions_base_dir=sessions_base_dir,
     )
-    train_ds = ResistanceDataset(df_valid, train_starts, **ds_kwargs)
-    val_ds   = ResistanceDataset(df_valid, val_starts,   **ds_kwargs)
+    train_ds = ResistanceDataset(df, train_starts, **ds_kwargs)
+    val_ds   = ResistanceDataset(df, val_starts,   **ds_kwargs)
 
-    space_base_rate = df_valid["key_space"].mean()
+    space_base_rate = df["key_space"].mean()
     print(f"Samples: {n_samples}  (train: {len(train_ds)}, val: {len(val_ds)})")
     print(f"Space-press base rate: {space_base_rate:.2%}  |  PER weight: {cfg.per_space_weight}x")
 
@@ -247,11 +258,14 @@ def build_dataloaders(
     # Val: DistributedSampler shards across processes so all_reduce gives the global metric.
     if world_size > 1:
         val_sampler = DistributedSampler(val_ds, num_replicas=world_size, rank=rank, shuffle=False)
-        val_loader  = DataLoader(val_ds, batch_size=cfg.batch_size, sampler=val_sampler, num_workers=0)
+        val_loader  = DataLoader(val_ds, batch_size=cfg.batch_size, sampler=val_sampler,
+                                 num_workers=num_workers, persistent_workers=(num_workers > 0))
     else:
-        val_loader  = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False, num_workers=0)
+        val_loader  = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False,
+                                 num_workers=num_workers, persistent_workers=(num_workers > 0))
 
-    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, sampler=train_sampler, num_workers=0)
+    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, sampler=train_sampler,
+                              num_workers=num_workers, persistent_workers=(num_workers > 0))
 
     return train_loader, val_loader, train_generator
 
