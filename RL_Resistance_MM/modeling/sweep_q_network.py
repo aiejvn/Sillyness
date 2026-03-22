@@ -69,7 +69,7 @@ PRESETS: list[RewardPreset] = [
 ]
 
 # PER_WEIGHTS: list[float] = [5, 10, 15, 20] 
-PER_WEIGHTS: list[float] = [11, 13, 15, 17, 19] 
+PER_WEIGHTS: list[float] = [11, 13, 15, 17, 19, 21, 29, 51, 101, 201] 
 
 # Combined-score weighting: lower score is better.
 LOSS_WEIGHT = 0.7
