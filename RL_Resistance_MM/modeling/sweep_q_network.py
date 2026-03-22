@@ -68,13 +68,12 @@ PRESETS: list[RewardPreset] = [
     # RewardPreset("game_optimal",           RewardWeights(time_burn=2.0, bio_efficiency=1.5, survivor_debuff=2.5, camera_uptime=0.25)),
 ]
 
-PER_WEIGHTS: list[float] = [5, 10, 15, 20] 
+# PER_WEIGHTS: list[float] = [5, 10, 15, 20] 
+PER_WEIGHTS: list[float] = [11, 13, 15, 17, 19] 
 
 # Combined-score weighting: lower score is better.
-# play_rate weighted 60% — direct proxy for game-relevant aggression.
-# val_loss weighted 40% — necessary condition for learning anything useful.
-LOSS_WEIGHT = 0.4
-RATE_WEIGHT = 0.6
+LOSS_WEIGHT = 0.7
+RATE_WEIGHT = 0.3
 
 # ── Model configs ─────────────────────────────────────────────────────────────
 # All derived from deep_q_v1.1 — same hyperparams, different architecture.
