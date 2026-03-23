@@ -83,6 +83,15 @@ BASE_CONFIGS = [
     dataclasses.replace(REGISTRY["deep_q_v1.1"], name="deep_q_anynet_mini",      network_class="DQN_AnyNet_Mini"),
 ]
 
+# Some notable models so far:
+# sweep_deep_q_multibranch_mini_time_burn_focused_per13
+# sweep_deep_q_anynet_mini_time_burn_focused_per17
+# sweep_deep_q_multibranch_mini_time_burn_focused_per17
+
+# Some shakier ones:
+# sweep_deep_q_multibranch_mini_time_burn_focused_per25
+# sweep_deep_q_multibranch_mini_time_burn_focused_per21
+# sweep_deep_q_multibranch_mini_time_burn_focused_per13
 
 # ── Single run ────────────────────────────────────────────────────────────────
 
