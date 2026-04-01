@@ -1,20 +1,17 @@
-"""sweep_q_network.py — Architecture search sweep over network size + reward weights + PER weight.
+"""sweep_reward_params.py — Hyperparameter sweep over reward weights + PER weight.
 
-Runs a grid of 7 arch variants x 4 reward presets x 4 PER weights = 112 total training
-runs, each for 5 epochs. Ranks results by a combined score (70% val loss, 30% play rate).
-
-Architecture variants:
-  AnyNet (ResNeXt-style): 4 variants sweeping num_stages and blocks_per_stage
-  MultiBranch (GoogLeNet-style): 3 variants sweeping num_inception_blocks
+Runs a grid of 2 models x 6 reward presets x 3 PER weights = 36 total training
+runs, each for 5 epochs. Ranks results by a combined score prioritizing play
+rate (60%) and eval loss (40%).
 
 Defaults to multi-session mind_over_matter training data. Pass --screens-dir
 to fall back to single-session mode.
 
 Usage:
-    python sweep_q_network.py
-    python sweep_q_network.py --dry-run            # 1 epoch per run to validate
-    python sweep_q_network.py --training-csv data/mind_over_matter/training.csv
-    python sweep_q_network.py --screens-dir ../input_capture/re_resistance_captures/won_in_area2/screens \\
+    python sweep_reward_params.py
+    python sweep_reward_params.py --dry-run            # 1 epoch per run to validate
+    python sweep_reward_params.py --training-csv data/mind_over_matter/training.csv
+    python sweep_reward_params.py --screens-dir ../input_capture/re_resistance_captures/won_in_area2/screens \\
         --training-csv data/test_won_in_area2/training_data.csv
 """
 
@@ -71,46 +68,30 @@ PRESETS: list[RewardPreset] = [
     # RewardPreset("game_optimal",           RewardWeights(time_burn=2.0, bio_efficiency=1.5, survivor_debuff=2.5, camera_uptime=0.25)),
 ]
 
-PER_WEIGHTS: list[float] = [13, 17, 21, 25]
+# PER_WEIGHTS: list[float] = [5, 10, 15, 20] 
+PER_WEIGHTS: list[float] = [11, 13, 15, 17, 19, 21, 23, 25, 27, 29] 
 
 # Combined-score weighting: lower score is better.
 LOSS_WEIGHT = 0.7
 RATE_WEIGHT = 0.3
 
-# ── Architecture configs ──────────────────────────────────────────────────────
-# All derived from deep_q_v1.1 — same training hyperparams, different architectures.
-# Goal: determine the best final architecture by sweeping network size.
-_BASE             = REGISTRY["deep_q_v1.1"]
-_ANYNET_BASE      = dataclasses.replace(_BASE, network_class="DQN_AnyNet_Parametric")
-_MULTIBRANCH_BASE = dataclasses.replace(_BASE, network_class="DQN_MultiBranch_Parametric")
-
-ARCH_CONFIGS = [
-
-    # ── AnyNet variants: ResNeXt-style, sweeping num_stages × blocks_per_stage ──
-    dataclasses.replace(_ANYNET_BASE, name="anynet_s1b1",
-        network_kwargs={"num_stages": 1, "blocks_per_stage": 1, "base_channels": 128}),
-    dataclasses.replace(_ANYNET_BASE, name="anynet_s1b5",
-        network_kwargs={"num_stages": 1, "blocks_per_stage": 5, "base_channels": 128}),
-    dataclasses.replace(_ANYNET_BASE, name="anynet_s1b10",
-        network_kwargs={"num_stages": 1, "blocks_per_stage": 10, "base_channels": 128}),
-    
-    dataclasses.replace(_ANYNET_BASE, name="anynet_s5b1",
-        network_kwargs={"num_stages": 5, "blocks_per_stage": 1, "base_channels": 128}),  
-    dataclasses.replace(_ANYNET_BASE, name="anynet_s5b5",
-        network_kwargs={"num_stages": 5, "blocks_per_stage": 5, "base_channels": 128}),  
-    dataclasses.replace(_ANYNET_BASE, name="anynet_s5b10",
-        network_kwargs={"num_stages": 5, "blocks_per_stage": 10, "base_channels": 128}),  
-    
-    # ── MultiBranch variants: GoogLeNet-style, sweeping num_inception_blocks ──
-    dataclasses.replace(_MULTIBRANCH_BASE, name="multibranch_i1",
-        network_kwargs={"num_inception_blocks": 1}),
-    
-    dataclasses.replace(_MULTIBRANCH_BASE, name="multibranch_i5",
-        network_kwargs={"num_inception_blocks": 5}),  
-
-    dataclasses.replace(_MULTIBRANCH_BASE, name="multibranch_i7",
-        network_kwargs={"num_inception_blocks": 7}),
+# ── Model configs ─────────────────────────────────────────────────────────────
+# All derived from deep_q_v1.1 — same hyperparams, different architecture.
+BASE_CONFIGS = [
+    # REGISTRY["deep_q_v1.1"],
+    dataclasses.replace(REGISTRY["deep_q_v1.1"], name="deep_q_multibranch_mini", network_class="DQN_MultiBranch_Mini"),
+    dataclasses.replace(REGISTRY["deep_q_v1.1"], name="deep_q_anynet_mini",      network_class="DQN_AnyNet_Mini"),
 ]
+
+# Some notable models so far:
+# sweep_deep_q_multibranch_mini_time_burn_focused_per13
+# sweep_deep_q_anynet_mini_time_burn_focused_per17
+# sweep_deep_q_multibranch_mini_time_burn_focused_per17
+
+# Some shakier ones:
+# sweep_deep_q_multibranch_mini_time_burn_focused_per25
+# sweep_deep_q_multibranch_mini_time_burn_focused_per21
+# sweep_deep_q_multibranch_mini_time_burn_focused_per13
 
 # ── Single run ────────────────────────────────────────────────────────────────
 
@@ -264,8 +245,8 @@ def main():
     num_epochs = 1 if args.dry_run else 5
     device, local_rank, world_size = setup_device()
 
-    total_runs = len(ARCH_CONFIGS) * len(PRESETS) * len(PER_WEIGHTS)
-    print(f"Sweep: {len(ARCH_CONFIGS)} arch variants x {len(PRESETS)} presets x {len(PER_WEIGHTS)} PER weights = {total_runs} runs")
+    total_runs = len(BASE_CONFIGS) * len(PRESETS) * len(PER_WEIGHTS)
+    print(f"Sweep: {len(BASE_CONFIGS)} models x {len(PRESETS)} presets x {len(PER_WEIGHTS)} PER weights = {total_runs} runs")
     print(f"Epochs per run: {num_epochs}{'  [DRY RUN]' if args.dry_run else ''}")
     print(f"Device: {device} \t World Size: {world_size} \t Local Rank: {local_rank}")
     print(f"Training CSV: {training_csv}")
@@ -278,7 +259,7 @@ def main():
     suffix = "-dry" if args.dry_run else ""
     csv_path = results_dir / f"{today}-sweep{suffix}.csv"
 
-    grid = [(b, p, w) for b in ARCH_CONFIGS for p in PRESETS for w in PER_WEIGHTS]
+    grid = [(b, p, w) for b in BASE_CONFIGS for p in PRESETS for w in PER_WEIGHTS]
     results = []
     for run_num, (base_cfg, preset, per_weight) in enumerate(grid, start=1):
         print(f"\n{'='*70}")

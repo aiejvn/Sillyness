@@ -7,8 +7,10 @@ Hierarchy:
   DecomposedQNetwork (abstract base)
     ├── DQN_V1              — 3-layer CNN + 2-layer FC, LazyBatchNorm throughout
     ├── DQN_V1_Mini         — 3-layer CNN + 1-layer FC (smaller debug network)
-    ├── DQN_MultiBranch_Mini — GoogLeNet-style: stem + 2 Inception blocks + FC(256)
-    └── DQN_AnyNet_Mini     — ResNeXt-style: stem + 2 stages × 2 blocks + FC(256)
+    ├── DQN_MultiBranch_Mini      — GoogLeNet-style: stem + 2 Inception blocks + FC(256)
+    ├── DQN_MultiBranch_Parametric — GoogLeNet-style: configurable num_inception_blocks
+    ├── DQN_AnyNet_Mini           — ResNeXt-style: stem + 2 stages × 2 blocks + FC(256)
+    └── DQN_AnyNet_Parametric     — ResNeXt-style: configurable num_stages, blocks_per_stage
 
 To add a new architecture: subclass DecomposedQNetwork, implement forward(),
 then register it in experiment._NETWORK_REGISTRY.
@@ -325,6 +327,121 @@ class DQN_MultiBranch_Mini(DecomposedQNetwork):
             nn.LazyLinear(256), nn.LazyBatchNorm1d(), nn.ReLU(),
         )
 
+        self.action_heads = nn.Linear(256, num_outputs)
+
+    def forward(self, image: torch.Tensor) -> torch.Tensor:
+        x = self.net(image)
+        state = self.state_fc(x)
+        return self.action_heads(state)
+
+
+class DQN_AnyNet_Parametric(DecomposedQNetwork):
+    """Parametric ResNeXt-style network for architecture search.
+
+    Generalizes DQN_AnyNet_Mini: same stem + pool + FC(256) tail, but with
+    configurable number of stages and blocks per stage.
+
+    Args:
+        num_stages:       Number of ResNeXt stages. Each stage doubles channels.
+        blocks_per_stage: ResNeXtBlocks per stage (first always downsamples).
+        base_channels:    Channel width of stage 1 (stage i → base_channels * 2^i).
+        groups:           Grouped-conv groups for each ResNeXtBlock.
+        bot_mul:          Bottleneck multiplier for each ResNeXtBlock.
+
+    Input:  (B, stack_size, H, W) stacked grayscale frames
+    Output: (B, num_outputs) Q-value score per action dimension
+    """
+
+    def __init__(
+        self,
+        num_outputs: int,
+        stack_size: int = 4,
+        num_stages: int = 2,
+        blocks_per_stage: int = 2,
+        base_channels: int = 128,
+        groups: int = 8,
+        bot_mul: float = 0.5,
+    ):
+        super().__init__(num_outputs, stack_size)
+
+        self.stem = nn.Sequential(
+            nn.LazyConv2d(32, kernel_size=3, stride=2, padding=1),
+            nn.LazyBatchNorm2d(), nn.ReLU(),
+        )
+
+        stage_list = []
+        for i in range(num_stages):
+            channels = base_channels * (2 ** i)
+            blocks = [ResNeXtBlock(channels, groups=groups, bot_mul=bot_mul,
+                                   use_1x1conv=True, strides=2)]
+            for _ in range(blocks_per_stage - 1):
+                blocks.append(ResNeXtBlock(channels, groups=groups, bot_mul=bot_mul))
+            stage_list.append(nn.Sequential(*blocks))
+        self.stages = nn.Sequential(*stage_list)
+
+        self.pool = nn.Sequential(nn.AdaptiveAvgPool2d((1, 1)), nn.Flatten())
+        self.state_fc = nn.Sequential(nn.LazyLinear(256), nn.LazyBatchNorm1d(), nn.ReLU())
+        self.action_heads = nn.Linear(256, num_outputs)
+
+    def forward(self, image: torch.Tensor) -> torch.Tensor:
+        x = self.stem(image)
+        x = self.stages(x)
+        x = self.pool(x)
+        state = self.state_fc(x)
+        return self.action_heads(state)
+
+
+# Fixed Inception channel configs indexed by block position (0-based).
+# Each entry: (c1, c2_tuple, c3_tuple, c4)
+_INCEPTION_CHANNEL_CONFIGS = [
+    (32,  (32,  64),  (8,  16), 16),
+    (64,  (64,  128), (16, 32), 32),
+    (128, (128, 192), (32, 64), 64),
+]
+
+
+class DQN_MultiBranch_Parametric(DecomposedQNetwork):
+    """Parametric GoogLeNet-style network for architecture search.
+
+    Generalizes DQN_MultiBranch_Mini: same stem + FC(256) tail, but with a
+    configurable number of Inception blocks.
+
+    Args:
+        num_inception_blocks: Number of Inception blocks (1–3). Channel configs
+                              are fixed per position (see _INCEPTION_CHANNEL_CONFIGS).
+        stem_channels:        Output channels for the stem conv layers.
+
+    Input:  (B, stack_size, H, W) stacked grayscale frames
+    Output: (B, num_outputs) Q-value score per action dimension
+    """
+
+    def __init__(
+        self,
+        num_outputs: int,
+        stack_size: int = 4,
+        num_inception_blocks: int = 2,
+        stem_channels: int = 32,
+    ):
+        super().__init__(num_outputs, stack_size)
+
+        layers: list[nn.Module] = [
+            nn.LazyConv2d(stem_channels, kernel_size=7, stride=2, padding=3),
+            nn.ReLU(), nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+            nn.LazyConv2d(stem_channels, kernel_size=1), nn.ReLU(),
+            nn.LazyConv2d(stem_channels * 2, kernel_size=3, padding=1), nn.ReLU(),
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+        ]
+
+        for i in range(num_inception_blocks):
+            cfg = _INCEPTION_CHANNEL_CONFIGS[min(i, len(_INCEPTION_CHANNEL_CONFIGS) - 1)]
+            layers.append(Inception(*cfg))
+            if i < num_inception_blocks - 1:
+                layers.append(nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
+
+        layers += [nn.AdaptiveAvgPool2d((1, 1)), nn.Flatten()]
+        self.net = nn.Sequential(*layers)
+
+        self.state_fc = nn.Sequential(nn.LazyLinear(256), nn.LazyBatchNorm1d(), nn.ReLU())
         self.action_heads = nn.Linear(256, num_outputs)
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:

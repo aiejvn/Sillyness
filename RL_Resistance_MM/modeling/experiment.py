@@ -23,7 +23,12 @@ from typing import Type
 
 import torch.nn as nn
 
-from networks import DecomposedQNetwork, DQN_V1, DQN_V1_Mini, DQN_MultiBranch_Mini, DQN_AnyNet_Mini
+from networks import (
+    DecomposedQNetwork,
+    DQN_V1, DQN_V1_Mini,
+    DQN_MultiBranch_Mini, DQN_MultiBranch_Parametric,
+    DQN_AnyNet_Mini, DQN_AnyNet_Parametric,
+)
 
 
 # ── Output column definitions ────────────────────────────────────────────────
@@ -45,7 +50,9 @@ _NETWORK_REGISTRY: dict[str, Type[DecomposedQNetwork]] = {
     "DQN_V1": DQN_V1,
     "DQN_V1.1": DQN_V1_Mini,
     "DQN_MultiBranch_Mini": DQN_MultiBranch_Mini,
+    "DQN_MultiBranch_Parametric": DQN_MultiBranch_Parametric,
     "DQN_AnyNet_Mini": DQN_AnyNet_Mini,
+    "DQN_AnyNet_Parametric": DQN_AnyNet_Parametric,
 }
 
 
@@ -87,6 +94,9 @@ class ExperimentConfig:
     # Sampling
     per_space_weight: float = 1.0       # PER upsampling ratio for space-press stacks (1.0 = uniform)
 
+    # Architecture kwargs passed through to the network constructor (beyond num_outputs/stack_size)
+    network_kwargs: dict = dataclasses.field(default_factory=dict)
+
     @property
     def num_outputs(self) -> int:
         return len(self.output_columns)
@@ -109,7 +119,8 @@ class ExperimentConfig:
         d = dict(d)
         d["img_size"] = tuple(d["img_size"])
         d["output_columns"] = tuple(d["output_columns"])
-        d.setdefault("per_space_weight", 1.0)  # backwards compat with old checkpoints
+        d.setdefault("per_space_weight", 1.0)   # backwards compat with old checkpoints
+        d.setdefault("network_kwargs", {})       # backwards compat with old checkpoints
         return cls(**d)
 
     @classmethod
@@ -129,7 +140,7 @@ def build_model(cfg: ExperimentConfig) -> DecomposedQNetwork:
     means someone added a config without registering the class (a clear bug).
     """
     network_cls = _NETWORK_REGISTRY[cfg.network_class]
-    return network_cls(num_outputs=cfg.num_outputs, stack_size=cfg.stack_size)
+    return network_cls(num_outputs=cfg.num_outputs, stack_size=cfg.stack_size, **cfg.network_kwargs)
 
 
 # ── Experiment registry ──────────────────────────────────────────────────────
