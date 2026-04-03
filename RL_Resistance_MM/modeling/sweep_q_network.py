@@ -59,10 +59,10 @@ class RewardPreset:
 PRESETS: list[RewardPreset] = [
     RewardPreset("time_burn_focused",      RewardWeights(time_burn=3.0, bio_efficiency=1.0,  survivor_debuff=0.5, camera_uptime=0.5)),
     
-    RewardPreset("burn_lean",              RewardWeights(time_burn=2.5, bio_efficiency=0.75, survivor_debuff=1.5, camera_uptime=0.5)),
+    # RewardPreset("burn_lean",              RewardWeights(time_burn=2.5, bio_efficiency=0.75, survivor_debuff=1.5, camera_uptime=0.5)),
     RewardPreset("burn_and_debuff",        RewardWeights(time_burn=3.0, bio_efficiency=0.5,  survivor_debuff=3.0, camera_uptime=0.25)),
     
-    RewardPreset("balanced",               RewardWeights(time_burn=2.0, bio_efficiency=0.75, survivor_debuff=2.0, camera_uptime=0.5)),
+    # RewardPreset("balanced",               RewardWeights(time_burn=2.0, bio_efficiency=0.75, survivor_debuff=2.0, camera_uptime=0.5)),
     
     # RewardPreset("debuff_lean",            RewardWeights(time_burn=1.5, bio_efficiency=0.5,  survivor_debuff=2.5, camera_uptime=0.75)),
     # RewardPreset("debuff_focused",         RewardWeights(time_burn=1.0, bio_efficiency=0.5,  survivor_debuff=3.0, camera_uptime=1.0)),
@@ -87,17 +87,11 @@ _MULTIBRANCH_BASE = dataclasses.replace(_BASE, network_class="DQN_MultiBranch_Pa
 ARCH_CONFIGS = [
 
     # ── AnyNet variants: ResNeXt-style, sweeping num_stages × blocks_per_stage ──
-    dataclasses.replace(_ANYNET_BASE, name="anynet_s1b1",
-        network_kwargs={"num_stages": 1, "blocks_per_stage": 1, "base_channels": 128}),
     dataclasses.replace(_ANYNET_BASE, name="anynet_s1b10",
         network_kwargs={"num_stages": 1, "blocks_per_stage": 10, "base_channels": 128}),
     dataclasses.replace(_ANYNET_BASE, name="anynet_s1b10",
         network_kwargs={"num_stages": 1, "blocks_per_stage": 20, "base_channels": 128}),
     
-    dataclasses.replace(_ANYNET_BASE, name="anynet_s5b1",
-        network_kwargs={"num_stages": 5, "blocks_per_stage": 1, "base_channels": 128}),  
-    dataclasses.replace(_ANYNET_BASE, name="anynet_s5b5",
-        network_kwargs={"num_stages": 5, "blocks_per_stage": 5, "base_channels": 128}),  
     dataclasses.replace(_ANYNET_BASE, name="anynet_s5b10",
         network_kwargs={"num_stages": 5, "blocks_per_stage": 10, "base_channels": 128}),  
     dataclasses.replace(_ANYNET_BASE, name="anynet_s5b10",
