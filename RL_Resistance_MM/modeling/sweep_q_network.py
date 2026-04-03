@@ -74,8 +74,8 @@ PRESETS: list[RewardPreset] = [
 PER_WEIGHTS: list[float] = [13, 17, 21, 25]
 
 # Combined-score weighting: lower score is better.
-LOSS_WEIGHT = 0.7
-RATE_WEIGHT = 0.3
+LOSS_WEIGHT = 0.9
+RATE_WEIGHT = 0.1
 
 # ── Architecture configs ──────────────────────────────────────────────────────
 # All derived from deep_q_v1.1 — same training hyperparams, different architectures.
@@ -89,10 +89,10 @@ ARCH_CONFIGS = [
     # ── AnyNet variants: ResNeXt-style, sweeping num_stages × blocks_per_stage ──
     dataclasses.replace(_ANYNET_BASE, name="anynet_s1b1",
         network_kwargs={"num_stages": 1, "blocks_per_stage": 1, "base_channels": 128}),
-    dataclasses.replace(_ANYNET_BASE, name="anynet_s1b5",
-        network_kwargs={"num_stages": 1, "blocks_per_stage": 5, "base_channels": 128}),
     dataclasses.replace(_ANYNET_BASE, name="anynet_s1b10",
         network_kwargs={"num_stages": 1, "blocks_per_stage": 10, "base_channels": 128}),
+    dataclasses.replace(_ANYNET_BASE, name="anynet_s1b10",
+        network_kwargs={"num_stages": 1, "blocks_per_stage": 20, "base_channels": 128}),
     
     dataclasses.replace(_ANYNET_BASE, name="anynet_s5b1",
         network_kwargs={"num_stages": 5, "blocks_per_stage": 1, "base_channels": 128}),  
@@ -100,6 +100,8 @@ ARCH_CONFIGS = [
         network_kwargs={"num_stages": 5, "blocks_per_stage": 5, "base_channels": 128}),  
     dataclasses.replace(_ANYNET_BASE, name="anynet_s5b10",
         network_kwargs={"num_stages": 5, "blocks_per_stage": 10, "base_channels": 128}),  
+    dataclasses.replace(_ANYNET_BASE, name="anynet_s5b10",
+        network_kwargs={"num_stages": 5, "blocks_per_stage": 20, "base_channels": 128}),  
     
     # ── MultiBranch variants: GoogLeNet-style, sweeping num_inception_blocks ──
     dataclasses.replace(_MULTIBRANCH_BASE, name="multibranch_i1",
